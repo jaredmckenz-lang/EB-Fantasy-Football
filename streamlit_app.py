@@ -152,6 +152,9 @@ class FPPlayer:
     def __init__(self, name, position):
         self.name = name
         self.position = position
+        self.proTeam = "N/A"
+        self.bye_week = "N/A"
+
         # properties used elsewhere remain absent (and safely ignored)
 
 def format_injury(player):
@@ -466,20 +469,23 @@ with tabs[3]:
                 verdict = "✅ Add (starts)" if worth and would_start(fa) else ("✅ Add" if worth else "❌ Pass")
                 drop_name = f"{drop_cand.name} ({getattr(drop_cand,'position','')})"
 
-            rows.append({
-                "Player": fa.name,
-                "Pos": pos,
-                "Source": source_used,
-                f"Weekly ({proj_source})": round(fa_w, 1),
-                "ROS ESPN": round(fa_re, 1),
-                "ROS FP": round(fa_rf, 1),
-                "Drop": drop_name,
-                "Δ Weekly": round(delta_w, 1),
-                "Δ ROS ESPN": round(delta_re, 1),
-                "Δ ROS FP": round(delta_rf, 1),
-                "Would Start?": "Yes" if would_start(fa) else "No",
-                "Verdict": verdict
-            })
+rows.append({
+    "Player": fa.name,
+    "Pos": pos,
+    "Team": getattr(fa, "proTeam", "N/A"),
+    "Bye": getattr(fa, "bye_week", "N/A"),
+    "Source": source_used,
+    f"Weekly ({proj_source})": round(fa_w, 1),
+    "ROS ESPN": round(fa_re, 1),
+    "ROS FP": round(fa_rf, 1),
+    "Drop": drop_name,
+    "Δ Weekly": round(delta_w, 1),
+    "Δ ROS ESPN": round(delta_re, 1),
+    "Δ ROS FP": round(delta_rf, 1),
+    "Would Start?": "Yes" if would_start(fa) else "No",
+    "Verdict": verdict
+})
+
 
     # Summary/debug
     with st.expander("Debug: FA source counts per position"):
