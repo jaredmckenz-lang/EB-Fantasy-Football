@@ -170,3 +170,14 @@ with tabs[3]:
 
     if os.path.exists(log_file):
         st.dataframe(pd.read_csv(log_file))
+
+import altair as alt
+
+tabs = st.tabs([
+    "✅ Optimizer", 
+    "🔍 Matchups", 
+    "🔄 Trade Analyzer (Beta)", 
+    "📈 Logs",
+    "📊 Advanced Stats"   # NEW TAB
+])
+
