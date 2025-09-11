@@ -18,7 +18,8 @@ def safe_proj(val):
 # ---------- FantasyPros scrapers (BeautifulSoup, no lxml) ----------
 @st.cache_data(ttl=6*60*60)
 def _fetch_fp_table(url: str) -> pd.DataFrame:
-    """Generic fetcher for FantasyPros tables with id='data'."""
+    """Generic fetcher for FantasyPros tables with id='data'. Extracts Player, Team, and optional Bye."""
+    import re
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
     res.raise_for_status()
     soup = BeautifulSoup(res.text, "html.parser")
@@ -34,9 +35,25 @@ def _fetch_fp_table(url: str) -> pd.DataFrame:
         if cols:
             rows.append(cols)
     df = pd.DataFrame(rows, columns=headers)
+
+    # If there's a Player column, extract team from "Player (TEAM)" and keep a clean name too
     if "Player" in df.columns:
-        # Drop team in parentheses; normalize spacing
-        df["Player"] = df["Player"].str.replace(r"\s+\(.*\)", "", regex=True)
+        # preserve original for parsing team in parentheses
+        df["_Player_raw"] = df["Player"]
+        # Extract (TEAM) from raw player string
+        def extract_team(raw):
+            m = re.search(r"\(([^)]+)\)", raw or "")
+            return m.group(1) if m else "N/A"
+        df["FP_Team"] = df["_Player_raw"].apply(extract_team)
+        # Clean player name (drop parentheses)
+        df["Player"] = df["_Player_raw"].str.replace(r"\s+\(.*\)", "", regex=True)
+
+    # Some FP tables include a "Bye" column; if not, fill N/A
+    if "Bye" in df.columns:
+        df["FP_Bye"] = df["Bye"]
+    else:
+        df["FP_Bye"] = "N/A"
+
     return df
 
 @st.cache_data(ttl=6*60*60)
@@ -149,11 +166,11 @@ def get_all_rostered_names(league):
 
 # Tiny shim so FP fallback rows can be treated like ESPN player objects
 class FPPlayer:
-    def __init__(self, name, position):
+    def __init__(self, name, position, team="N/A", bye="N/A"):
         self.name = name
         self.position = position
-        self.proTeam = "N/A"
-        self.bye_week = "N/A"
+        self.proTeam = team
+        self.bye_week = bye
 
         # properties used elsewhere remain absent (and safely ignored)
 
@@ -445,7 +462,15 @@ with tabs[3]:
                 df_fp["FPTS_num"] = pd.to_numeric(df_fp["FPTS"], errors="coerce").fillna(0.0)
                 df_fp.sort_values("FPTS_num", ascending=False, inplace=True)
                 df_fp = df_fp.head(fa_size)
-                fa_list = [FPPlayer(row["Player"], pos) for _, row in df_fp.iterrows()]
+                fa_list = [
+                    FPPlayer(
+                        row["Player"],
+                        pos,
+                        team=row.get("FP_Team", "N/A"),
+                        bye=row.get("FP_Bye", "N/A")
+                    )
+    for _, row in df_fp.iterrows()
+]
             fp_counts[pos] = len(fa_list)
         else:
             fp_counts[pos] = 0  # not used
