@@ -1,0 +1,76 @@
+from espn_api.football import League
+
+# --- Set up league (private league example) ---
+league = League(
+    league_id=1225913587,
+    year=2025,
+    espn_s2='YOUR_ESPN_S2',
+    swid='{YOUR_SWID}'
+)
+
+# --- Get your team (teamId is 5, index starts from 0, so it's index 4) ---
+my_team = league.teams[4]
+
+# --- Define your league's lineup configuration ---
+starting_slots = {
+    'QB': 1,
+    'RB': 2,
+    'WR': 2,
+    'TE': 1,
+    'FLEX': 1,  # RB/WR/TE eligible
+    'D/ST': 1,
+    'K': 1
+}
+
+# --- Group players by eligible positions ---
+roster = my_team.roster
+position_groups = {
+    'QB': [],
+    'RB': [],
+    'WR': [],
+    'TE': [],
+    'FLEX': [],
+    'D/ST': [],
+    'K': [],
+    'Bench': []
+}
+
+# --- Sort players into their positions ---
+for player in roster:
+    pos = player.position
+    if pos in ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST']:
+        position_groups[pos].append(player)
+
+# Add FLEX-eligible players (RB/WR/TE)
+for pos in ['RB', 'WR', 'TE']:
+    position_groups['FLEX'].extend(position_groups[pos])
+
+# --- Sort each position group by projected points ---
+for pos in position_groups:
+    position_groups[pos].sort(key=lambda x: x.projected_points or 0, reverse=True)
+
+# --- Build optimized starting lineup ---
+optimized_lineup = {}
+used_players = set()
+
+for pos, count in starting_slots.items():
+    optimized_lineup[pos] = []
+    eligible_players = position_groups[pos]
+    selected = 0
+    for player in eligible_players:
+        if player not in used_players and selected < count:
+            optimized_lineup[pos].append(player)
+            used_players.add(player)
+            selected += 1
+
+# --- Print Optimized Lineup ---
+print("\n🧠 Optimized Starting Lineup:")
+for pos, players in optimized_lineup.items():
+    for player in players:
+        print(f"{pos}: {player.name} – {player.projected_points} pts")
+
+# --- Suggest Bench Players ---
+print("\n🪑 Bench Recommendations:")
+for player in roster: 
+    if player not in used_players:
+        print(f"{player.name} – {player.projected_points} pts")
