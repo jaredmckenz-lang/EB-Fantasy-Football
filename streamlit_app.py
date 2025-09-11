@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 import altair as alt
+import requests
 from espn_api.football import League
 
 st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
@@ -13,19 +14,63 @@ def safe_proj(val):
     except Exception:
         return 0.0
 
+@st.cache_data(ttl=6*60*60)
+def fetch_fantasypros_projections(position="qb", scoring="ppr"):
+    """
+    Fetch FantasyPros projections for a given position.
+    position: qb, rb, wr, te, k, dst
+    scoring: standard, half, ppr
+    """
+    url = f"https://www.fantasypros.com/nfl/projections/{position}.php?scoring={scoring}"
+    try:
+        tables = pd.read_html(url)
+        if not tables:
+            return pd.DataFrame()
+        df = tables[0]
+        df["Player"] = df["Player"].str.replace(r"\s+\(.*\)", "", regex=True)  # remove team info
+        return df
+    except Exception as e:
+        st.warning(f"FantasyPros fetch failed for {position}: {e}")
+        return pd.DataFrame()
+
 def get_proj(player, week=None):
-    """Return projected points (prefer stats dict, fallback to projected_points)."""
+    """Return projected points based on selected projection source."""
     if week is None:
         week = league.current_week
-    try:
-        if hasattr(player, "stats") and week in player.stats:
-            return player.stats[week].get("projected", 0) or 0
-        return player.projected_points or 0
-    except Exception:
-        return 0
+    pos_map = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te", "K": "k", "D/ST": "dst"}
+    pos = getattr(player, "position", "").upper()
+
+    # ESPN first
+    if proj_source in ["ESPN only", "FantasyPros fallback"]:
+        try:
+            if hasattr(player, "stats") and week in player.stats:
+                val = player.stats[week].get("projected", 0) or 0
+                if val:
+                    return val
+            if player.projected_points:
+                return player.projected_points
+        except Exception:
+            pass
+        if proj_source == "ESPN only":
+            return 0
+
+    # FantasyPros
+    if proj_source in ["FantasyPros fallback", "FantasyPros only"]:
+        if pos not in pos_map:
+            return 0
+        df = fetch_fantasypros_projections(pos_map[pos])
+        if df.empty:
+            return 0
+        row = df[df["Player"].str.contains(player.name.split()[0], case=False)]
+        if not row.empty:
+            try:
+                return float(row["FPTS"].values[0])
+            except Exception:
+                return 0
+    return 0
 
 def get_proj_ros(player, start_week=None):
-    """Return Rest-of-Season projected points (sum of all future weeks)."""
+    """Return Rest-of-Season projections (ESPN only)."""
     try:
         if start_week is None:
             start_week = league.current_week
@@ -50,13 +95,10 @@ def build_optimizer(roster, starting_slots):
         pos = getattr(p, "position", "")
         if pos in groups:
             groups[pos].append(p)
-    # FLEX pool: RB/WR/TE
     for pos in ["RB", "WR", "TE"]:
         groups["FLEX"].extend(groups[pos])
-    # sort by projection
     for pos in groups:
         groups[pos].sort(key=lambda p: get_proj(p), reverse=True)
-    # choose starters (no duplicates)
     used = set()
     lineup = {slot: [] for slot in starting_slots}
     for slot, count in starting_slots.items():
@@ -86,7 +128,7 @@ def connect_league():
         st.stop()
 
     league = League(league_id=int(league_id), year=int(year), espn_s2=espn_s2, swid=swid)
-    team = league.teams[int(team_id) - 1]  # ESPN teamId is 1-based
+    team = league.teams[int(team_id) - 1]
     return league, team
 
 # ---------- app ----------
@@ -95,7 +137,12 @@ st.title("🏈 Fantasy Football Weekly Starter Optimizer")
 league, my_team = connect_league()
 st.subheader(f"Team: **{my_team.team_name}** ({my_team.team_abbrev})")
 
-# lineup slots (edit to match your league)
+# projection source toggle
+with st.sidebar:
+    st.header("Projection Source")
+    proj_source = st.radio("Choose projections", ["ESPN only", "FantasyPros fallback", "FantasyPros only"], index=1)
+
+# lineup slots
 with st.expander("Lineup Slots", expanded=True):
     c1, c2, c3, c4 = st.columns(4)
     QB  = c1.number_input("QB", 1, 3, 1)
@@ -109,21 +156,14 @@ with st.expander("Lineup Slots", expanded=True):
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
-# Define ALL tabs ONCE
-tabs = st.tabs([
-    "✅ Optimizer",
-    "🔍 Matchups",
-    "🔄 Trade Analyzer",
-    "📈 Logs",
-    "📊 Advanced Stats"
-])
+tabs = st.tabs(["✅ Optimizer", "🔍 Matchups", "🔄 Trade Analyzer", "📈 Logs", "📊 Advanced Stats"])
 
 # ----- Optimizer -----
 with tabs[0]:
     roster = my_team.roster
     lineup, bench = build_optimizer(roster, starting_slots)
 
-    st.markdown("### Optimized Starting Lineup")
+    st.markdown(f"### Optimized Starting Lineup ({proj_source})")
     for slot, players in lineup.items():
         for p in players:
             st.write(f"**{slot}**: {p.name} — {get_proj(p):.1f} (This Week) | {get_proj_ros(p):.1f} (ROS)")
@@ -150,7 +190,7 @@ with tabs[1]:
 # ----- Trade Analyzer -----
 with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
-    st.caption("Evaluates both This Week and Rest-of-Season (ROS) projections.")
+    st.caption(f"Evaluates trades using {proj_source} for This Week and ESPN for ROS.")
 
     team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
     team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
@@ -197,17 +237,17 @@ with tabs[2]:
         teamB_gain_ros = total_A_ros - total_B_ros
 
         st.markdown("#### 📈 Trade Summary")
-        st.write(f"**This Week** → {teamA.team_abbrev} net: {teamA_gain_wk:+.1f}, "
+        st.write(f"**This Week ({proj_source})** → {teamA.team_abbrev} net: {teamA_gain_wk:+.1f}, "
                  f"{teamB.team_abbrev} net: {teamB_gain_wk:+.1f}")
-        st.write(f"**ROS** → {teamA.team_abbrev} net: {teamA_gain_ros:+.1f}, "
+        st.write(f"**ROS (ESPN only)** → {teamA.team_abbrev} net: {teamA_gain_ros:+.1f}, "
                  f"{teamB.team_abbrev} net: {teamB_gain_ros:+.1f}")
 
         def to_df(players, title):
             rows = [{
                 "Player": p.name,
                 "Pos": getattr(p, "position", ""),
-                "Proj (This Week)": get_proj(p),
-                "Proj (ROS)": get_proj_ros(p),
+                f"Proj (This Week: {proj_source})": get_proj(p),
+                "Proj (ROS: ESPN)": get_proj_ros(p),
             } for p in players]
             st.markdown(f"**{title}**")
             if rows:
@@ -239,8 +279,8 @@ with tabs[3]:
         row = {
             "Week": week,
             "Team": my_team.team_name,
-            "Projected (This Week)": sum(get_proj(p) for p in my_team.roster),
-            "Projected (ROS)": sum(get_proj_ros(p) for p in my_team.roster),
+            f"Projected (This Week: {proj_source})": sum(get_proj(p) for p in my_team.roster),
+            "Projected (ROS: ESPN)": sum(get_proj_ros(p) for p in my_team.roster),
             "Points": safe_proj(getattr(my_team, "points", 0)),
         }
         df = pd.DataFrame([row])
@@ -255,15 +295,15 @@ with tabs[3]:
 
 # ----- Advanced Stats -----
 with tabs[4]:
-    st.markdown("### 📊 Advanced Player Stats")
+    st.markdown(f"### 📊 Advanced Player Stats ({proj_source})")
     roster = my_team.roster
     rows = []
     for p in roster:
         rows.append({
             "Player": p.name,
             "Pos": getattr(p, "position", "N/A"),
-            "Projection (This Week)": get_proj(p),
-            "Projection (ROS)": get_proj_ros(p),
+            f"Projection (This Week: {proj_source})": get_proj(p),
+            "Projection (ROS: ESPN)": get_proj_ros(p),
             "Last Week": safe_proj(getattr(p, "points", 0)),
             "Opponent": getattr(p, "pro_opponent", "N/A"),
         })
@@ -274,10 +314,10 @@ with tabs[4]:
     else:
         st.dataframe(df)
 
-        # Grouped bar chart (This Week vs ROS)
+        # Grouped bar chart
         df_melt = df.melt(
             id_vars=["Player", "Pos"],
-            value_vars=["Projection (This Week)", "Projection (ROS)"],
+            value_vars=[f"Projection (This Week: {proj_source})", "Projection (ROS: ESPN)"],
             var_name="Type",
             value_name="Points"
         )
