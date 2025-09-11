@@ -181,3 +181,44 @@ tabs = st.tabs([
     "📊 Advanced Stats"   # NEW TAB
 ])
 
+# ----- Advanced Stats -----
+with tabs[4]:
+    st.markdown("### 📊 Advanced Player Stats")
+
+    roster = my_team.roster
+    data = []
+    for p in roster:
+        proj = safe_proj(getattr(p, "projected_points", 0))
+        pts = safe_proj(getattr(p, "points", 0))   # last week’s actual
+        opp = getattr(p, "pro_opponent", "N/A")   # opponent this week (if supported)
+        pos = getattr(p, "position", "N/A")
+
+        data.append({
+            "Player": p.name,
+            "Pos": pos,
+            "Projection": proj,
+            "Last Week": pts,
+            "Opponent": opp
+        })
+
+    df = pd.DataFrame(data)
+
+    if not df.empty:
+        st.dataframe(df)
+
+        # Chart: Projection vs Last Week
+        chart = (
+            alt.Chart(df)
+            .mark_circle(size=100)
+            .encode(
+                x="Last Week",
+                y="Projection",
+                color="Pos",
+                tooltip=["Player", "Pos", "Opponent", "Projection", "Last Week"]
+            )
+            .interactive()
+        )
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.info("No player data available yet.")
+
