@@ -139,6 +139,21 @@ def get_ros_fp(player):
         return safe_proj(row.get("FPTS", 0))
     return 0.0
 
+# Build a set of all rostered player names in the league (for FP fallback)
+def get_all_rostered_names(league):
+    names = set()
+    for t in league.teams:
+        for p in t.roster:
+            names.add(p.name.strip())
+    return names
+
+# Tiny shim so FP fallback rows can be treated like ESPN player objects
+class FPPlayer:
+    def __init__(self, name, position):
+        self.name = name
+        self.position = position
+        # properties used elsewhere remain absent (and safely ignored)
+
 def format_injury(player):
     status = getattr(player, "injuryStatus", None)
     wk = get_proj_week(player)
@@ -349,35 +364,35 @@ with tabs[2]:
 # ----- Free Agents -----
 with tabs[3]:
     st.markdown("### 🛒 Free Agents — Add/Drop Recommendations")
-    st.caption("Evaluates weekly (chosen source) and ROS (ESPN & FP) deltas vs your worst cut candidate at that position.")
+    st.caption(
+        "Pulls ESPN free agents when available. If ESPN returns none (offseason/draft), "
+        "falls back to FantasyPros weekly projections minus all rostered players in your league."
+    )
 
     # Tuning knobs
-    fa_size = st.slider("How many free agents per position to scan", 10, 150, 50, step=10)
+    fa_size = st.slider("How many free agents per position to scan", 10, 200, 60, step=10)
     weekly_threshold = st.number_input("Worth-it threshold (Δ Weekly points)", 0.0, 20.0, 2.0, step=0.5)
-    ros_threshold = st.number_input("Worth-it threshold (Δ ROS points)", 0.0, 200.0, 15.0, step=1.0)
+    ros_threshold = st.number_input("Worth-it threshold (Δ ROS points)", 0.0, 300.0, 18.0, step=1.0)
 
     # Build your current best lineup
     my_roster = my_team.roster
     lineup, bench = build_optimizer(my_roster, starting_slots)
 
-    # Starters by slot; quick helpers
     starters_by_pos = {k: lineup.get(k, []) for k in ["QB", "RB", "WR", "TE", "K", "D/ST"]}
-    flex_eligible = set(["RB", "WR", "TE"])
+    flex_eligible = {"RB", "WR", "TE"}
 
     def is_flex_eligible(pos): return pos in flex_eligible
 
     def lowest_bench_candidate(position):
-        """Worst cut candidate from bench (same pos; if none & FLEX-eligible, use FLEX pool)."""
         same_pos = [p for p in bench if getattr(p, "position", "") == position]
         pool = same_pos or ([p for p in bench if getattr(p, "position", "") in flex_eligible] if is_flex_eligible(position) else [])
         if not pool:
             return None, 0.0, 0.0, 0.0
-        pool_sorted = sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))  # safer drop: low ROS FP, then low weekly
+        pool_sorted = sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))
         cand = pool_sorted[0]
         return cand, get_proj_week(cand), get_ros_espn(cand), get_ros_fp(cand)
 
     def would_start(fa_player):
-        """Would FA crack starters at this slot (or FLEX)?"""
         pos = getattr(fa_player, "position", "")
         fa_w = get_proj_week(fa_player)
         slot_starters = starters_by_pos.get(pos, [])
@@ -391,20 +406,51 @@ with tabs[3]:
                 return True
         return False
 
-    # Build FA table
+    # Build FA table with ESPN first, FP fallback
     rows = []
     positions_to_scan = ["QB", "RB", "WR", "TE", "K", "D/ST"]
-    for pos in positions_to_scan:
-        try:
-            fas = league.free_agents(position=pos, size=fa_size)
-        except Exception as e:
-            st.warning(f"Could not fetch free agents for {pos}: {e}")
-            fas = []
+    rostered_names = get_all_rostered_names(league)
 
-        for fa in fas:
-            fa_w = get_proj_week(fa)
-            fa_re = get_ros_espn(fa)
-            fa_rf = get_ros_fp(fa)
+    espn_counts, fp_counts = {}, {}
+
+    for pos in positions_to_scan:
+        # Try ESPN free agents
+        fa_list = []
+        source_used = "ESPN"
+        try:
+            try_pos = pos
+            try:
+                fa_list = league.free_agents(position=try_pos, size=fa_size)
+            except Exception:
+                if pos == "D/ST":
+                    fa_list = league.free_agents(position="DST", size=fa_size)
+                else:
+                    raise
+        except Exception as e:
+            st.warning(f"Could not fetch ESPN free agents for {pos}: {e}")
+            fa_list = []
+
+        espn_counts[pos] = len(fa_list)
+
+        # FP fallback if ESPN returned zero
+        if len(fa_list) == 0:
+            source_used = "FantasyPros"
+            key = {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}[pos]
+            df_fp = fp_weekly.get(key, pd.DataFrame())
+            if not df_fp.empty and "FPTS" in df_fp.columns:
+                df_fp = df_fp[~df_fp["Player"].isin(rostered_names)].copy()
+                df_fp["FPTS_num"] = pd.to_numeric(df_fp["FPTS"], errors="coerce").fillna(0.0)
+                df_fp.sort_values("FPTS_num", ascending=False, inplace=True)
+                df_fp = df_fp.head(fa_size)
+                fa_list = [FPPlayer(row["Player"], pos) for _, row in df_fp.iterrows()]
+            fp_counts[pos] = len(fa_list)
+        else:
+            fp_counts[pos] = 0  # not used
+
+        for fa in fa_list:
+            fa_w = get_proj_week(fa)                # weekly uses chosen source toggle
+            fa_re = get_ros_espn(fa)                # ROS ESPN
+            fa_rf = get_ros_fp(fa)                  # ROS FP (season)
 
             drop_cand, drop_w, drop_re, drop_rf = lowest_bench_candidate(pos)
 
@@ -423,6 +469,7 @@ with tabs[3]:
             rows.append({
                 "Player": fa.name,
                 "Pos": pos,
+                "Source": source_used,
                 f"Weekly ({proj_source})": round(fa_w, 1),
                 "ROS ESPN": round(fa_re, 1),
                 "ROS FP": round(fa_rf, 1),
@@ -434,33 +481,48 @@ with tabs[3]:
                 "Verdict": verdict
             })
 
+    # Summary/debug
+    with st.expander("Debug: FA source counts per position"):
+        dbg = pd.DataFrame({
+            "Position": positions_to_scan,
+            "ESPN FAs": [espn_counts.get(p, 0) for p in positions_to_scan],
+            "FP Fallback Used": [fp_counts.get(p, 0) for p in positions_to_scan],
+        })
+        st.dataframe(dbg, use_container_width=True)
+
     if rows:
         df_fa = pd.DataFrame(rows)
-        # Score = best of deltas; sort recommended first
         df_fa["_score"] = df_fa[["Δ Weekly", "Δ ROS ESPN", "Δ ROS FP"]].max(axis=1)
         df_fa["Recommended"] = df_fa["Verdict"].str.startswith("✅")
         df_fa.sort_values(by=["Recommended", "_score"], ascending=[False, False], inplace=True)
         df_fa.drop(columns=["_score"], inplace=True)
 
-        # Filters
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             pos_filter = st.multiselect("Filter positions", positions_to_scan, default=positions_to_scan)
         with c2:
             only_recommended = st.checkbox("Show only recommended adds (✅)", value=False)
         with c3:
             only_starters = st.checkbox("Show only FAs who would start", value=False)
+        with c4:
+            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN","FantasyPros"])
 
         view = df_fa[df_fa["Pos"].isin(pos_filter)]
+        view = view[view["Source"].isin(source_filter)]
         if only_recommended:
             view = view[view["Recommended"]]
         if only_starters:
             view = view[view["Would Start?"] == "Yes"]
 
         st.dataframe(view.drop(columns=["Recommended"]), use_container_width=True)
-        st.caption("Verdict rules: Add if Δ Weekly ≥ threshold OR Δ ROS (ESPN/FP) ≥ threshold. Marked 'starts' if the FA outprojects your worst current starter at the position (or FLEX).")
+        st.caption(
+            "Verdict rules: Add if Δ Weekly ≥ threshold OR Δ ROS (ESPN/FP) ≥ threshold. "
+            "‘Starts’ if FA outprojects your worst starter at that position (or FLEX). "
+            "Source shows where the FA list came from (ESPN or FantasyPros fallback)."
+        )
     else:
-        st.info("No free agents found or unable to fetch at this time.")
+        st.info("No free agents found (even with FantasyPros fallback). Try increasing the 'How many free agents' slider.")
+
 
 # ----- Logs -----
 with tabs[4]:
