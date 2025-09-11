@@ -24,10 +24,24 @@ def get_proj(player, week=None):
     except Exception:
         return 0
 
+def get_proj_ros(player, start_week=None):
+    """Return Rest-of-Season projected points (sum of all future weeks)."""
+    try:
+        if start_week is None:
+            start_week = league.current_week
+        total = 0
+        if hasattr(player, "stats"):
+            for wk, vals in player.stats.items():
+                if isinstance(wk, int) and wk >= start_week:
+                    total += vals.get("projected", 0) or 0
+        return total
+    except Exception:
+        return 0
+
 def format_injury(player):
     status = getattr(player, "injuryStatus", None)
     pts = get_proj(player)
-    text = f"{player.name} — {pts:.1f} pts"
+    text = f"{player.name} — {pts:.1f} pts (This Week)"
     return f"⚠️ {text} ({status})" if status else text
 
 def build_optimizer(roster, starting_slots):
@@ -112,11 +126,11 @@ with tabs[0]:
     st.markdown("### Optimized Starting Lineup")
     for slot, players in lineup.items():
         for p in players:
-            st.write(f"**{slot}**: {format_injury(p)}")
+            st.write(f"**{slot}**: {p.name} — {get_proj(p):.1f} (This Week) | {get_proj_ros(p):.1f} (ROS)")
 
     st.markdown("### Bench")
     for p in bench:
-        st.write(format_injury(p))
+        st.write(f"{p.name} — {get_proj(p):.1f} (This Week) | {get_proj_ros(p):.1f} (ROS)")
 
 # ----- Matchups -----
 with tabs[1]:
@@ -125,11 +139,9 @@ with tabs[1]:
         st.caption(f"Week {league.current_week}")
         for m in league.box_scores():
             home, away = m.home_team, m.away_team
-            hp = get_proj(home.roster[0]) if home.roster else 0
-            ap = get_proj(away.roster[0]) if away.roster else 0
             st.write(f"**{home.team_name}** vs **{away.team_name}**")
-            st.progress(min(int(hp * 2), 100), text=f"{home.team_abbrev}: {hp:.1f} pts")
-            st.progress(min(int(ap * 2), 100), text=f"{away.team_abbrev}: {ap:.1f} pts")
+            st.caption(f"{home.team_abbrev}: {safe_proj(getattr(home, 'projected_total', 0)):.1f} pts | "
+                       f"{away.team_abbrev}: {safe_proj(getattr(away, 'projected_total', 0)):.1f} pts")
             st.divider()
     except Exception as e:
         st.info("Matchup data not available yet.")
@@ -138,7 +150,7 @@ with tabs[1]:
 # ----- Trade Analyzer -----
 with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
-    st.caption("Select two teams and the players each side would SEND away.")
+    st.caption("Evaluates both This Week and Rest-of-Season (ROS) projections.")
 
     team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
     team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
@@ -158,7 +170,7 @@ with tabs[2]:
 
     if teamA.team_id != teamB.team_id:
         def roster_names(team):
-            return [f"{p.name} — {p.position} ({get_proj(p):.1f})" for p in team.roster]
+            return [f"{p.name} — {p.position} ({get_proj(p):.1f} / {get_proj_ros(p):.1f})" for p in team.roster]
 
         def string_to_player(name_str, team):
             pname = name_str.split(" — ")[0]
@@ -174,26 +186,29 @@ with tabs[2]:
         send_B = [string_to_player(lbl, teamB) for lbl in send_B_labels]
 
         def total_proj(players):
-            return sum(get_proj(p) for p in players)
+            return sum(get_proj(p) for p in players), sum(get_proj_ros(p) for p in players)
 
-        total_A_out = total_proj(send_A)
-        total_B_out = total_proj(send_B)
-        teamA_gain = total_B_out - total_A_out
-        teamB_gain = total_A_out - total_B_out
+        total_A_wk, total_A_ros = total_proj(send_A)
+        total_B_wk, total_B_ros = total_proj(send_B)
+
+        teamA_gain_wk = total_B_wk - total_A_wk
+        teamB_gain_wk = total_A_wk - total_B_wk
+        teamA_gain_ros = total_B_ros - total_A_ros
+        teamB_gain_ros = total_A_ros - total_B_ros
 
         st.markdown("#### 📈 Trade Summary")
-        m1, m2, m3 = st.columns(3)
-        m1.metric(f"{teamA.team_abbrev} gets", f"{total_B_out:.1f} pts")
-        m2.metric(f"{teamA.team_abbrev} gives", f"{total_A_out:.1f} pts")
-        m3.metric(f"Net {teamA.team_abbrev}", f"{teamA_gain:+.1f}")
-
-        n1, n2, n3 = st.columns(3)
-        n1.metric(f"{teamB.team_abbrev} gets", f"{total_A_out:.1f} pts")
-        n2.metric(f"{teamB.team_abbrev} gives", f"{total_B_out:.1f} pts")
-        n3.metric(f"Net {teamB.team_abbrev}", f"{teamB_gain:+.1f}")
+        st.write(f"**This Week** → {teamA.team_abbrev} net: {teamA_gain_wk:+.1f}, "
+                 f"{teamB.team_abbrev} net: {teamB_gain_wk:+.1f}")
+        st.write(f"**ROS** → {teamA.team_abbrev} net: {teamA_gain_ros:+.1f}, "
+                 f"{teamB.team_abbrev} net: {teamB_gain_ros:+.1f}")
 
         def to_df(players, title):
-            rows = [{"Player": p.name, "Pos": getattr(p, "position", ""), "Proj": get_proj(p)} for p in players]
+            rows = [{
+                "Player": p.name,
+                "Pos": getattr(p, "position", ""),
+                "Proj (This Week)": get_proj(p),
+                "Proj (ROS)": get_proj_ros(p),
+            } for p in players]
             st.markdown(f"**{title}**")
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
@@ -216,15 +231,16 @@ with tabs[3]:
     st.markdown("### Weekly Performance Logger")
     week = getattr(league, "current_week", None)
     colA, colB = st.columns(2)
-    colA.metric("Projected Total", f"{get_proj(my_team.roster[0]) if my_team.roster else 0:.1f}")
-    colB.metric("Points Scored", f"{safe_proj(getattr(my_team, 'points', 0)):.1f}")
+    colA.metric("Projected Total (This Week)", f"{sum(get_proj(p) for p in my_team.roster):.1f}")
+    colB.metric("Projected Total (ROS)", f"{sum(get_proj_ros(p) for p in my_team.roster):.1f}")
 
     log_file = "performance_log.csv"
     if st.button("📊 Log This Week"):
         row = {
             "Week": week,
             "Team": my_team.team_name,
-            "Projected": sum(get_proj(p) for p in my_team.roster),
+            "Projected (This Week)": sum(get_proj(p) for p in my_team.roster),
+            "Projected (ROS)": sum(get_proj_ros(p) for p in my_team.roster),
             "Points": safe_proj(getattr(my_team, "points", 0)),
         }
         df = pd.DataFrame([row])
@@ -246,25 +262,36 @@ with tabs[4]:
         rows.append({
             "Player": p.name,
             "Pos": getattr(p, "position", "N/A"),
-            "Projection": get_proj(p),
+            "Projection (This Week)": get_proj(p),
+            "Projection (ROS)": get_proj_ros(p),
             "Last Week": safe_proj(getattr(p, "points", 0)),
             "Opponent": getattr(p, "pro_opponent", "N/A"),
         })
     df = pd.DataFrame(rows)
+
     if df.empty:
         st.info("No player data available yet.")
     else:
         st.dataframe(df)
+
+        # Grouped bar chart (This Week vs ROS)
+        df_melt = df.melt(
+            id_vars=["Player", "Pos"],
+            value_vars=["Projection (This Week)", "Projection (ROS)"],
+            var_name="Type",
+            value_name="Points"
+        )
         chart = (
-            alt.Chart(df)
-            .mark_circle(size=100)
+            alt.Chart(df_melt)
+            .mark_bar()
             .encode(
-                x="Last Week:Q",
-                y="Projection:Q",
-                color="Pos:N",
-                tooltip=["Player", "Pos", "Opponent", "Projection", "Last Week"]
+                x=alt.X("Player:N", sort="-y"),
+                y="Points:Q",
+                color="Type:N",
+                column="Pos:N",
+                tooltip=["Player", "Pos", "Type", "Points"]
             )
-            .interactive()
+            .properties(width=120, height=250)
         )
         st.altair_chart(chart, use_container_width=True)
 
