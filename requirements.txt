@@ -3,6 +3,4 @@ espn-api
 pandas
 altair
 requests
-lxml
 beautifulsoup4
-html5lib
