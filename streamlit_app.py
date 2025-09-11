@@ -472,6 +472,8 @@ with tabs[3]:
             rows.append({
                 "Player": fa.name,
                 "Pos": pos,
+                "Team": getattr(fa, "proTeam", "N/A"),
+                "Bye": getattr(fa, "bye_week", "N/A"),
                 "Source": source_used,
                 f"Weekly ({proj_source})": round(fa_w, 1),
                 "ROS ESPN": round(fa_re, 1),
@@ -483,8 +485,6 @@ with tabs[3]:
                 "Would Start?": "Yes" if would_start(fa) else "No",
                 "Verdict": verdict
             })
-
-
 
     # Summary/debug
     with st.expander("Debug: FA source counts per position"):
