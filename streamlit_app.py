@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import streamlit as st
+import altair as alt
 from espn_api.football import League
 
 st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
@@ -19,7 +20,6 @@ def format_injury(player):
     return f"⚠️ {text} ({status})" if status else text
 
 def build_optimizer(roster, starting_slots):
-    # group eligible players
     groups = {k: [] for k in ["QB", "RB", "WR", "TE", "D/ST", "K", "FLEX"]}
     for p in roster:
         pos = getattr(p, "position", "")
@@ -28,14 +28,14 @@ def build_optimizer(roster, starting_slots):
     # FLEX pool: RB/WR/TE
     for pos in ["RB", "WR", "TE"]:
         groups["FLEX"].extend(groups[pos])
-    # sort by proj
+    # sort by projection
     for pos in groups:
         groups[pos].sort(key=lambda p: safe_proj(getattr(p, "projected_points", 0)), reverse=True)
-    # pick starters, avoid duplicates
+    # choose starters (no duplicates)
     used = set()
     lineup = {slot: [] for slot in starting_slots}
     for slot, count in starting_slots.items():
-        for p in groups[slot]:
+        for p in groups.get(slot, []):
             if p not in used and len(lineup[slot]) < count:
                 lineup[slot].append(p)
                 used.add(p)
@@ -43,7 +43,6 @@ def build_optimizer(roster, starting_slots):
     return lineup, bench
 
 def connect_league():
-    # pull from secrets; allow sidebar override
     espn_s2 = st.secrets.get("espn_s2", "")
     swid = st.secrets.get("swid", "")
     league_id = int(st.secrets.get("league_id", 0) or 0)
@@ -71,7 +70,7 @@ st.title("🏈 Fantasy Football Weekly Starter Optimizer")
 league, my_team = connect_league()
 st.subheader(f"Team: **{my_team.team_name}** ({my_team.team_abbrev})")
 
-# lineup slots (you can tweak to match your league)
+# lineup slots (edit to match your league)
 with st.expander("Lineup Slots", expanded=True):
     c1, c2, c3, c4 = st.columns(4)
     QB  = c1.number_input("QB", 1, 3, 1)
@@ -84,7 +83,15 @@ with st.expander("Lineup Slots", expanded=True):
     K    = c7.number_input("K", 0, 2, 1)
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
-tabs = st.tabs(["✅ Optimizer", "🔍 Matchups", "🔄 Trade Analyzer (Beta)", "📈 Logs"])
+
+# Define ALL tabs ONCE
+tabs = st.tabs([
+    "✅ Optimizer",
+    "🔍 Matchups",
+    "🔄 Trade Analyzer (Beta)",
+    "📈 Logs",
+    "📊 Advanced Stats"
+])
 
 # ----- Optimizer -----
 with tabs[0]:
@@ -107,7 +114,8 @@ with tabs[1]:
         st.caption(f"Week {league.current_week}")
         for m in league.box_scores():
             home, away = m.home_team, m.away_team
-            hp, ap = safe_proj(getattr(home, "projected_total", 0)), safe_proj(getattr(away, "projected_total", 0))
+            hp = safe_proj(getattr(home, "projected_total", 0))
+            ap = safe_proj(getattr(away, "projected_total", 0))
             st.write(f"**{home.team_name}** vs **{away.team_name}**")
             st.progress(min(int(hp * 2), 100), text=f"{home.team_abbrev}: {hp:.1f} pts")
             st.progress(min(int(ap * 2), 100), text=f"{away.team_abbrev}: {ap:.1f} pts")
@@ -171,105 +179,33 @@ with tabs[3]:
     if os.path.exists(log_file):
         st.dataframe(pd.read_csv(log_file))
 
-import altair as alt
-
-tabs = st.tabs([
-    "✅ Optimizer", 
-    "🔍 Matchups", 
-    "🔄 Trade Analyzer (Beta)", 
-    "📈 Logs",
-    "📊 Advanced Stats"   # NEW TAB
-])
-
 # ----- Advanced Stats -----
 with tabs[4]:
     st.markdown("### 📊 Advanced Player Stats")
-
     roster = my_team.roster
-    data = []
+    rows = []
     for p in roster:
-        proj = safe_proj(getattr(p, "projected_points", 0))
-        pts = safe_proj(getattr(p, "points", 0))   # last week’s actual
-        opp = getattr(p, "pro_opponent", "N/A")   # opponent this week (if supported)
-        pos = getattr(p, "position", "N/A")
-
-        data.append({
+        rows.append({
             "Player": p.name,
-            "Pos": pos,
-            "Projection": proj,
-            "Last Week": pts,
-            "Opponent": opp
+            "Pos": getattr(p, "position", "N/A"),
+            "Projection": safe_proj(getattr(p, "projected_points", 0)),
+            "Last Week": safe_proj(getattr(p, "points", 0)),
+            "Opponent": getattr(p, "pro_opponent", "N/A"),
         })
-
-    df = pd.DataFrame(data)
-
-    if not df.empty:
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info("No player data available yet.")
+    else:
         st.dataframe(df)
-
-        # Chart: Projection vs Last Week
         chart = (
             alt.Chart(df)
             .mark_circle(size=100)
             .encode(
-                x="Last Week",
-                y="Projection",
-                color="Pos",
+                x="Last Week:Q",
+                y="Projection:Q",
+                color="Pos:N",
                 tooltip=["Player", "Pos", "Opponent", "Projection", "Last Week"]
             )
             .interactive()
         )
         st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("No player data available yet.")
-
-import altair as alt
-
-tabs = st.tabs([
-    "✅ Optimizer", 
-    "🔍 Matchups", 
-    "🔄 Trade Analyzer (Beta)", 
-    "📈 Logs",
-    "📊 Advanced Stats"   # NEW TAB
-])
-
-# ----- Advanced Stats -----
-with tabs[4]:
-    st.markdown("### 📊 Advanced Player Stats")
-
-    roster = my_team.roster
-    data = []
-    for p in roster:
-        proj = safe_proj(getattr(p, "projected_points", 0))
-        pts = safe_proj(getattr(p, "points", 0))   # last week’s actual
-        opp = getattr(p, "pro_opponent", "N/A")   # opponent this week (if supported)
-        pos = getattr(p, "position", "N/A")
-
-        data.append({
-            "Player": p.name,
-            "Pos": pos,
-            "Projection": proj,
-            "Last Week": pts,
-            "Opponent": opp
-        })
-
-    df = pd.DataFrame(data)
-
-    if not df.empty:
-        st.dataframe(df)
-
-        # Chart: Projection vs Last Week
-        chart = (
-            alt.Chart(df)
-            .mark_circle(size=100)
-            .encode(
-                x="Last Week",
-                y="Projection",
-                color="Pos",
-                tooltip=["Player", "Pos", "Opponent", "Projection", "Last Week"]
-            )
-            .interactive()
-        )
-        st.altair_chart(chart, use_container_width=True)
-    else:
-        st.info("No player data available yet.")
-
