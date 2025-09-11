@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 import requests
+from bs4 import BeautifulSoup
 from espn_api.football import League
 
 st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
@@ -15,26 +16,47 @@ def safe_proj(val):
         return 0.0
 
 @st.cache_data(ttl=6*60*60)
-def fetch_fantasypros_projections(position="qb", scoring="ppr"):
+def fetch_all_fantasypros(scoring="ppr"):
     """
-    Fetch FantasyPros projections for a given position.
-    position: qb, rb, wr, te, k, dst
-    scoring: standard, half, ppr
+    Fetch FantasyPros projections for all positions (qb, rb, wr, te, k, dst).
+    Cached for 6 hours.
     """
-    url = f"https://www.fantasypros.com/nfl/projections/{position}.php?scoring={scoring}"
-    try:
-        tables = pd.read_html(url)
-        if not tables:
-            return pd.DataFrame()
-        df = tables[0]
-        df["Player"] = df["Player"].str.replace(r"\s+\(.*\)", "", regex=True)  # remove team info
-        return df
-    except Exception as e:
-        st.warning(f"FantasyPros fetch failed for {position}: {e}")
-        return pd.DataFrame()
+    positions = ["qb", "rb", "wr", "te", "k", "dst"]
+    data = {}
+
+    for pos in positions:
+        url = f"https://www.fantasypros.com/nfl/projections/{pos}.php?scoring={scoring}"
+        try:
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            res.raise_for_status()
+            soup = BeautifulSoup(res.text, "html.parser")
+
+            table = soup.find("table", {"id": "data"})
+            if not table:
+                continue
+
+            headers = [th.get_text(strip=True) for th in table.find("thead").find_all("th")]
+            rows = []
+            for tr in table.find("tbody").find_all("tr"):
+                cols = [td.get_text(strip=True) for td in tr.find_all("td")]
+                if cols:
+                    rows.append(cols)
+
+            df = pd.DataFrame(rows, columns=headers)
+
+            # Normalize player names
+            if "Player" in df.columns:
+                df["Player"] = df["Player"].str.replace(r"\s+\(.*\)", "", regex=True)
+
+            data[pos] = df
+        except Exception as e:
+            st.warning(f"FantasyPros fetch failed for {pos}: {e}")
+            data[pos] = pd.DataFrame()
+
+    return data
 
 def get_proj(player, week=None):
-    """Return projected points based on selected projection source."""
+    """Return projected points from ESPN or FantasyPros depending on source toggle."""
     if week is None:
         week = league.current_week
     pos_map = {"QB": "qb", "RB": "rb", "WR": "wr", "TE": "te", "K": "k", "D/ST": "dst"}
@@ -58,11 +80,11 @@ def get_proj(player, week=None):
     if proj_source in ["FantasyPros fallback", "FantasyPros only"]:
         if pos not in pos_map:
             return 0
-        df = fetch_fantasypros_projections(pos_map[pos])
+        df = fantasypros_data.get(pos_map[pos], pd.DataFrame())
         if df.empty:
             return 0
         row = df[df["Player"].str.contains(player.name.split()[0], case=False)]
-        if not row.empty:
+        if not row.empty and "FPTS" in df.columns:
             try:
                 return float(row["FPTS"].values[0])
             except Exception:
@@ -141,6 +163,9 @@ st.subheader(f"Team: **{my_team.team_name}** ({my_team.team_abbrev})")
 with st.sidebar:
     st.header("Projection Source")
     proj_source = st.radio("Choose projections", ["ESPN only", "FantasyPros fallback", "FantasyPros only"], index=1)
+
+# fetch FantasyPros once for all positions
+fantasypros_data = fetch_all_fantasypros()
 
 # lineup slots
 with st.expander("Lineup Slots", expanded=True):
