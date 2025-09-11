@@ -102,4 +102,87 @@ with tabs[0]:
     st.markdown("### Optimized Starting Lineup")
     for slot, players in lineup.items():
         for p in players:
-            st.
+            st.write(f"**{slot}**: {format_injury(p)}")
+
+    st.markdown("### Bench")
+    for p in bench:
+        st.write(format_injury(p))
+
+# ------- Matchups -------
+with tabs[1]:
+    st.markdown("### This Week's Matchups & Projections")
+    try:
+        week = league.current_week
+        st.caption(f"Week {week}")
+    except Exception:
+        pass
+
+    try:
+        bs = league.box_scores()
+        for m in bs:
+            home, away = m.home_team, m.away_team
+            hp = getattr(home, "projected_total", 0) or 0
+            ap = getattr(away, "projected_total", 0) or 0
+            st.write(f"**{home.team_name}** vs **{away.team_name}**")
+            st.progress(min(int(hp * 2), 100), text=f"{home.team_abbrev}: {hp:.1f} pts")
+            st.progress(min(int(ap * 2), 100), text=f"{away.team_abbrev}: {ap:.1f} pts")
+            st.divider()
+    except Exception as e:
+        st.info("Matchup data not available yet.")
+        st.caption(str(e))
+
+# ------- Trade Analyzer (Beta) -------
+with tabs[2]:
+    st.markdown("Compare your player to another player (name match).")
+    my_names = [p.name for p in roster]
+    your_pick = st.selectbox("Your Player", my_names, index=0 if my_names else None)
+    other_name = st.text_input("Other Player (type full name)")
+
+    if your_pick and other_name:
+        your_player = next((p for p in roster if p.name == your_pick), None)
+        # Look across free agents by that position for a quick projection comparison
+        try:
+            fa = league.free_agents(position=your_player.position, size=100)
+        except Exception:
+            fa = []
+        target = next((p for p in fa if p.name.lower() == other_name.lower()), None)
+
+        yp = safe_proj(getattr(your_player, "projected_points", 0))
+        if target:
+            tp = safe_proj(getattr(target, "projected_points", 0))
+            st.write(f"**{your_player.name}**: {yp:.1f} pts vs **{target.name}**: {tp:.1f} pts")
+            diff = tp - yp
+            if diff > 0:
+                st.success(f"👍 +{diff:.1f} projected pts (favorable).")
+            elif diff < 0:
+                st.warning(f"⚠️ {diff:.1f} projected pts (unfavorable).")
+            else:
+                st.info("Even trade by projections.")
+        else:
+            st.warning("Couldn’t find that other player among free agents for comparison. Try exact spelling.")
+
+# ------- Logs -------
+with tabs[3]:
+    st.markdown("### Weekly Performance Logger")
+    log_file = "performance_log.csv"
+    week = getattr(league, "current_week", None)
+    colA, colB = st.columns(2)
+    colA.metric("Projected Total", f"{safe_proj(getattr(my_team, 'projected_total', 0)):.1f}")
+    colB.metric("Points Scored (if played)", f"{safe_proj(getattr(my_team, 'points', 0)):.1f}")
+
+    if st.button("📊 Log This Week"):
+        row = {
+            "Week": week,
+            "Team": my_team.team_name,
+            "Projected": safe_proj(getattr(my_team, "projected_total", 0)),
+            "Points": safe_proj(getattr(my_team, "points", 0)),
+        }
+        df = pd.DataFrame([row])
+        if os.path.exists(log_file):
+            old = pd.read_csv(log_file)
+            df = pd.concat([old, df], ignore_index=True)
+        df.to_csv(log_file, index=False)
+        st.success(f"Saved to {log_file}")
+
+    if os.path.exists(log_file):
+        st.dataframe(pd.read_csv(log_file))
