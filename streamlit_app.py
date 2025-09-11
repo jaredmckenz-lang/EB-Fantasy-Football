@@ -125,33 +125,119 @@ with tabs[1]:
         st.caption(str(e))
 
 # ----- Trade Analyzer (Beta) -----
+# ----- Trade Analyzer (Team-to-Team) -----
 with tabs[2]:
-    st.caption("Compare your player vs another player by name (free agents search used for estimate).")
-    my_names = [p.name for p in roster]
-    your_pick = st.selectbox("Your Player", my_names, index=0 if my_names else None)
-    other_name = st.text_input("Other Player (type exact full name)")
+    st.markdown("### 🔄 Team-to-Team Trade Analyzer")
+    st.caption("Select two teams and the players each side would SEND away. Projections are this week’s.")
 
-    if your_pick and other_name:
-        you = next((p for p in roster if p.name == your_pick), None)
-        try:
-            fa = league.free_agents(position=you.position, size=100)
-        except Exception:
-            fa = []
-        target = next((p for p in fa if p.name.lower() == other_name.lower()), None)
+    # Map teams for selection
+    team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
+    team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
 
-        yp = safe_proj(getattr(you, "projected_points", 0))
-        if target:
-            tp = safe_proj(getattr(target, "projected_points", 0))
-            st.write(f"**{you.name}**: {yp:.1f} pts vs **{target.name}**: {tp:.1f} pts")
-            diff = tp - yp
-            if diff > 0:
-                st.success(f"👍 +{diff:.1f} projected pts (favorable).")
-            elif diff < 0:
-                st.warning(f"⚠️ {diff:.1f} projected pts (unfavorable).")
+    # Preselect Team A as your team
+    default_idx = next((i for i, label in enumerate(team_options)
+                        if team_lookup[label].team_id == my_team.team_id), 0)
+
+    colA, colB = st.columns(2)
+    with colA:
+        teamA_label = st.selectbox("Team A (your perspective)", team_options, index=default_idx)
+    with colB:
+        # choose a different default for Team B
+        alt_idx = 1 if default_idx == 0 and len(team_options) > 1 else 0
+        teamB_label = st.selectbox("Team B", team_options, index=alt_idx)
+
+    teamA = team_lookup[teamA_label]
+    teamB = team_lookup[teamB_label]
+
+    if teamA.team_id == teamB.team_id:
+        st.warning("Pick two different teams to evaluate a trade.")
+    else:
+        # Build multiselects from each roster
+        def roster_names(team):
+            return [f"{p.name} — {p.position} ({(safe_proj(getattr(p,'projected_points',0))):.1f})" for p in team.roster]
+
+        def string_to_player(name_str, team):
+            # name_str format: "Player — POS (x.x)"
+            pname = name_str.split(" — ")[0]
+            return next((p for p in team.roster if p.name == pname), None)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            send_A_labels = st.multiselect(
+                f"{teamA_label} sends",
+                options=roster_names(teamA)
+            )
+        with col2:
+            send_B_labels = st.multiselect(
+                f"{teamB_label} sends",
+                options=roster_names(teamB)
+            )
+
+        send_A = [string_to_player(lbl, teamA) for lbl in send_A_labels]
+        send_B = [string_to_player(lbl, teamB) for lbl in send_B_labels]
+
+        # Totals
+        def total_proj(players):
+            return sum(safe_proj(getattr(p, "projected_points", 0)) for p in players)
+
+        total_A_out = total_proj(send_A)
+        total_B_out = total_proj(send_B)
+
+        # Gains = players received minus players sent
+        teamA_gain = total_B_out - total_A_out
+        teamB_gain = total_A_out - total_B_out
+
+        st.markdown("#### 📈 Summary (this week projections)")
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"{teamA.team_abbrev} gets", f"{total_B_out:.1f} pts")
+        m2.metric(f"{teamA.team_abbrev} gives", f"{total_A_out:.1f} pts")
+        m3.metric(f"Net for {teamA.team_abbrev}", f"{teamA_gain:+.1f} pts")
+
+        n1, n2, n3 = st.columns(3)
+        n1.metric(f"{teamB.team_abbrev} gets", f"{total_A_out:.1f} pts")
+        n2.metric(f"{teamB.team_abbrev} gives", f"{total_B_out:.1f} pts")
+        n3.metric(f"Net for {teamB.team_abbrev}", f"{teamB_gain:+.1f} pts")
+
+        # Tables of players involved
+        def to_df(players, title):
+            rows = [{
+                "Player": p.name,
+                "Pos": getattr(p, "position", ""),
+                "Proj (wk)": safe_proj(getattr(p, "projected_points", 0))
+            } for p in players]
+            st.markdown(f"**{title}**")
+            if rows:
+                st.dataframe(pd.DataFrame(rows).sort_values("Proj (wk)", ascending=False), use_container_width=True)
             else:
-                st.info("Even trade by projections.")
+                st.caption("None selected.")
+
+        st.markdown("#### 📋 Players Involved")
+        cL, cR = st.columns(2)
+        with cL:
+            to_df(send_A, f"{teamA_label} sends")
+            to_df(send_B, f"{teamA_label} receives")
+        with cR:
+            to_df(send_B, f"{teamB_label} sends")
+            to_df(send_A, f"{teamB_label} receives")
+
+        # Perspective toggle (optional)
+        view_as = st.radio("Perspective", [teamA.team_abbrev, teamB.team_abbrev], horizontal=True)
+        if view_as == teamA.team_abbrev:
+            if teamA_gain > 0:
+                st.success(f"{teamA_label} gains **{teamA_gain:.1f}** projected points.")
+            elif teamA_gain < 0:
+                st.warning(f"{teamA_label} loses **{-teamA_gain:.1f}** projected points.")
+            else:
+                st.info("Even trade by this week's projections.")
         else:
-            st.warning("Couldn’t find that other player among free agents for comparison. Check spelling.")
+            if teamB_gain > 0:
+                st.success(f"{teamB_label} gains **{teamB_gain:.1f}** projected points.")
+            elif teamB_gain < 0:
+                st.warning(f"{teamB_label} loses **{-teamB_gain:.1f}** projected points.")
+            else:
+                st.info("Even trade by this week's projections.")
+
+        st.caption("Note: uses ESPN weekly projections available via espn_api. Consider schedule, injuries, and ROS value before accepting.")
 
 # ----- Logs -----
 with tabs[3]:
