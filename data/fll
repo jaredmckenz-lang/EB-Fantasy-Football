@@ -74,3 +74,6 @@ print("\n🪑 Bench Recommendations:")
 for player in roster: 
     if player not in used_players:
         print(f"{player.name} – {player.projected_points} pts")
+
+pip install altair
+
