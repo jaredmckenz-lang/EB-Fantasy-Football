@@ -2,6 +2,7 @@ import streamlit as st
 from espn_api.football import League
 
 # Load secrets
+
 espn_s2 = st.secrets["espn_s2"]
 swid = st.secrets["swid"]
 league_id = st.secrets["league_id"]
