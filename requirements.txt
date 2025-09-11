@@ -1,2 +1,3 @@
 streamlit
+espn-api
 pandas
