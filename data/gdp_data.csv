@@ -1,28 +1,32 @@
+import streamlit as st
 from espn_api.football import League
 
-# --- Set up league (private league example) ---
-league = League(
-    league_id=1225913587,
-    year=2025,
-    espn_s2='YOUR_ESPN_S2',
-    swid='{YOUR_SWID}'
-)
+# Load secrets
+espn_s2 = st.secrets["espn_s2"]
+swid = st.secrets["swid"]
+league_id = st.secrets["league_id"]
+team_id = st.secrets["team_id"]
+year = st.secrets["year"]
 
-# --- Get your team (teamId is 5, index starts from 0, so it's index 4) ---
-my_team = league.teams[4]
+# Connect to your league
+league = League(league_id=league_id, year=year, espn_s2=espn_s2, swid=swid)
+my_team = league.teams[team_id - 1]  # index starts at 0
 
-# --- Define your league's lineup configuration ---
+st.title("🏈 Weekly Starter Optimizer")
+st.subheader(f"Team: {my_team.team_name}")
+
+# Position settings (customize for your league)
 starting_slots = {
     'QB': 1,
     'RB': 2,
     'WR': 2,
     'TE': 1,
-    'FLEX': 1,  # RB/WR/TE eligible
+    'FLEX': 1,
     'D/ST': 1,
     'K': 1
 }
 
-# --- Group players by eligible positions ---
+# Prepare player pools
 roster = my_team.roster
 position_groups = {
     'QB': [],
@@ -35,42 +39,43 @@ position_groups = {
     'Bench': []
 }
 
-# --- Sort players into their positions ---
 for player in roster:
     pos = player.position
-    if pos in ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST']:
+    if pos in position_groups:
         position_groups[pos].append(player)
 
-# Add FLEX-eligible players (RB/WR/TE)
+# FLEX = RB/WR/TE
 for pos in ['RB', 'WR', 'TE']:
     position_groups['FLEX'].extend(position_groups[pos])
 
-# --- Sort each position group by projected points ---
+# Sort by projected points
 for pos in position_groups:
     position_groups[pos].sort(key=lambda x: x.projected_points or 0, reverse=True)
 
-# --- Build optimized starting lineup ---
+# Build lineup
 optimized_lineup = {}
 used_players = set()
 
 for pos, count in starting_slots.items():
     optimized_lineup[pos] = []
-    eligible_players = position_groups[pos]
+    eligible = position_groups[pos]
     selected = 0
-    for player in eligible_players:
+    for player in eligible:
         if player not in used_players and selected < count:
             optimized_lineup[pos].append(player)
             used_players.add(player)
             selected += 1
 
-# --- Print Optimized Lineup ---
-print("\n🧠 Optimized Starting Lineup:")
+# Display optimized lineup
+st.markdown("### ✅ Optimized Starting Lineup")
 for pos, players in optimized_lineup.items():
     for player in players:
-        print(f"{pos}: {player.name} – {player.projected_points} pts")
+        st.write(f"**{pos}**: {player.name} — {player.projected_points} pts")
 
-# --- Suggest Bench Players ---
-print("\n🪑 Bench Recommendations:")
+# Show bench players
+st.markdown("### 🪑 Bench Recommendations")
 for player in roster:
     if player not in used_players:
-        print(f"{player.name} – {player.projected_points} pts")
+        st.write(f"{player.name} — {player.projected_points} pts")
+
+# Optional: Add matchup or injury info here
