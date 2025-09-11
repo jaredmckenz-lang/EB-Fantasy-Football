@@ -2,3 +2,4 @@ streamlit
 espn-api
 pandas
 altair
+requests
