@@ -358,14 +358,11 @@ with tabs[0]:
 # ----- Matchups -----
 with tabs[1]:
     st.markdown("### This Week's Matchups & Projections")
-    st.caption(f"Week {league.current_week}")
+    try:
+        st.caption(f"Week {league.current_week}")
 
-    cards = []
-    my_game = None
-    error_msg = None
-
-    # Safely gather matchups without try/except syntax at the top level
-    with suppress(Exception):
+        cards = []
+        my_game = None
         for m in league.box_scores():
             home, away = m.home_team, m.away_team
             hp = safe_proj(getattr(home, "projected_total", 0))
@@ -374,12 +371,10 @@ with tabs[1]:
             if my_team.team_id in [home.team_id, away.team_id]:
                 my_game = (home, hp, away, ap)
 
-    if not cards:
-        st.info("Matchup data not available yet.")
-    else:
-        avg_proj = sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
-        st.markdown(f"**League avg projected points (per team):** {avg_proj:.1f}")
-        st.divider()
+        if cards:
+            avg_proj = sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
+            st.markdown(f"**League avg projected points (per team):** {avg_proj:.1f}")
+            st.divider()
 
         for home, hp, away, ap in cards:
             st.write(f"**{home.team_name}** ({home.team_abbrev}) vs **{away.team_name}** ({away.team_abbrev})")
@@ -398,6 +393,9 @@ with tabs[1]:
                 f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
             )
 
+    except Exception as e:
+        st.info("Matchup data not available yet.")
+        st.caption(str(e))
 
 # ----- Trade Analyzer -----
 with tabs[2]:
