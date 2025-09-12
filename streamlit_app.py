@@ -5,7 +5,7 @@ import altair as alt
 import requests
 from bs4 import BeautifulSoup
 from espn_api.football import League
-from contextlib import suppress
+
 
 
 st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
