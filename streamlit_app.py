@@ -361,6 +361,7 @@ with tabs[1]:
 
         cards = []
         my_game = None
+
         for m in league.box_scores():
             home, away = m.home_team, m.away_team
             hp = safe_proj(getattr(home, "projected_total", 0))
@@ -394,6 +395,7 @@ with tabs[1]:
     except Exception as e:
         st.info("Matchup data not available yet.")
         st.caption(str(e))
+
 
 # ----- Trade Analyzer -----
 with tabs[2]:
