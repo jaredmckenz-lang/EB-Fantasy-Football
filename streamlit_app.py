@@ -511,8 +511,7 @@ with tabs[2]:
         with cR:
             table(send_B, f"{teamB_label} sends")
             table(send_A, f"{teamB_label} receives")
-
-       else:
+    else:
         st.warning("Pick two different teams to evaluate a trade.")
 
     # --- Example good trade scenarios (single 1-for-1 ideas) ---
