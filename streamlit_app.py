@@ -401,6 +401,7 @@ with tabs[1]:
         st.caption(str(e))
 
 
+
 # ----- Trade Analyzer -----
 with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
