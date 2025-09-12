@@ -392,7 +392,9 @@ with tabs[1]:
             margin = hp - ap if home.team_id == my_team.team_id else ap - hp
             tilt = "favored" if margin >= 0 else "underdog"
             st.info(f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — You are **{tilt}** by {abs(margin):.1f} (by projections).")
-
+        except Exception as e:
+            st.info("Matchup data not available yet.")
+            st.caption(str(e))
 
 # ----- Trade Analyzer -----
 with tabs[2]:
