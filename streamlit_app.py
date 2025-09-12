@@ -391,7 +391,6 @@ with tabs[1]:
                 f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — "
                 f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
             )
-
     except Exception as e:
         st.info("Matchup data not available yet.")
         st.caption(str(e))
