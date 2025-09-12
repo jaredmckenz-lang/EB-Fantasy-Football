@@ -28,3 +28,9 @@ A Streamlit dashboard that connects to your **ESPN Fantasy Football** league to:
 ## 🧱 Requirements
 
 `requirements.txt` should include:
+streamlit
+espn-api
+pandas
+altair
+requests
+beautifulsoup4
