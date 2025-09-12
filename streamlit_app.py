@@ -258,7 +258,16 @@ with st.expander("Lineup Slots", expanded=True):
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
 # Tabs (added 🛒 Free Agents)
-tabs = st.tabs(["✅ Optimizer", "🔍 Matchups", "🔄 Trade Analyzer", "🛒 Free Agents", "📈 Logs", "📊 Advanced Stats"])
+tabs = st.tabs([
+    "✅ Optimizer",
+    "🔍 Matchups",
+    "🔄 Trade Analyzer",
+    "🛒 Free Agents",
+    "📈 Logs",
+    "📊 Advanced Stats",
+    "🧾 Waiver Tracker"  # NEW TAB (appended to avoid reindexing other tabs)
+])
+
 
 # ----- Optimizer -----
 with tabs[0]:
@@ -635,3 +644,202 @@ with tabs[5]:
                 "stats_proj(cur wk)": p.stats.get(league.current_week, {}).get("projected", None) if hasattr(p, "stats") else None
             })
         st.dataframe(pd.DataFrame(debug))
+
+# ----- Waiver Tracker -----
+with tabs[-1]:
+    st.markdown("### 🧾 Waiver Wire Tracker")
+    st.caption(
+        "Ranks free agents by **expected gain** vs your best drop and suggests a FAAB bid. "
+        "Weekly projections use your sidebar source; ROS uses both ESPN and FP (season)."
+    )
+
+    # Controls
+    cA, cB, cC, cD = st.columns(4)
+    with cA:
+        fa_size = st.slider("FA pool per position", 10, 200, 60, step=10)
+    with cB:
+        budget_remaining = st.number_input("Your remaining FAAB ($)", min_value=0, value=100, step=5)
+    with cC:
+        max_bid_pct = st.slider("Max bid % of budget", 5, 80, 30, step=5)
+    with cD:
+        target_positions = st.multiselect(
+            "Positions to consider",
+            ["RB", "WR", "QB", "TE", "D/ST", "K"],
+            default=["RB", "WR", "TE", "QB"]
+        )
+
+    # Positional scarcity multipliers (tweak if you like)
+    st.markdown("**Positional weights** (scarcity/impact)")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    w_rb = c1.number_input("RB w", 0.5, 2.0, 1.5, 0.1)
+    w_wr = c2.number_input("WR w", 0.5, 2.0, 1.3, 0.1)
+    w_te = c3.number_input("TE w", 0.5, 2.0, 1.2, 0.1)
+    w_qb = c4.number_input("QB w", 0.5, 2.0, 1.0, 0.1)
+    w_dst = c5.number_input("D/ST w", 0.5, 2.0, 0.7, 0.1)
+    w_k = c6.number_input("K w", 0.5, 2.0, 0.6, 0.1)
+    pos_w = {"RB": w_rb, "WR": w_wr, "TE": w_te, "QB": w_qb, "D/ST": w_dst, "K": w_k}
+
+    # Build current optimized lineup + bench for drop comps
+    my_roster = my_team.roster
+    lineup, bench = build_optimizer(my_roster, starting_slots)
+    starters_by_pos = {k: lineup.get(k, []) for k in ["QB", "RB", "WR", "TE", "K", "D/ST"]}
+    flex_eligible = {"RB", "WR", "TE"}
+
+    def is_flex_eligible(pos): return pos in flex_eligible
+
+    def lowest_drop_candidate(position):
+        """Worst drop candidate: prefer bench same-pos; if none and FLEX-eligible, use FLEX bench pool."""
+        same_pos = [p for p in bench if getattr(p, "position", "") == position]
+        pool = same_pos or ([p for p in bench if getattr(p, "position", "") in flex_eligible] if is_flex_eligible(position) else [])
+        if not pool:
+            return None
+        # safest drop = lowest ROS FP, tie-break by weekly
+        return sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))[0]
+
+    def would_start(player):
+        """Would this player beat your worst starter at their slot or FLEX?"""
+        pos = getattr(player, "position", "")
+        w = get_proj_week(player)
+        slot_starters = starters_by_pos.get(pos, [])
+        if slot_starters:
+            worst_starter = min(slot_starters, key=lambda p: get_proj_week(p))
+            if w > get_proj_week(worst_starter):
+                return True
+        if is_flex_eligible(pos) and lineup.get("FLEX"):
+            worst_flex = min(lineup["FLEX"], key=lambda p: get_proj_week(p))
+            if w > get_proj_week(worst_flex):
+                return True
+        return False
+
+    # Get FA lists (ESPN first, FP fallback) similar to Free Agents tab
+    rostered_names = get_all_rostered_names(league)
+    rows = []
+
+    for pos in target_positions:
+        # Try ESPN FAs
+        fa_list = []
+        source_used = "ESPN"
+        try:
+            try:
+                fa_list = league.free_agents(position=pos, size=fa_size)
+            except Exception:
+                if pos == "D/ST":
+                    fa_list = league.free_agents(position="DST", size=fa_size)
+        except Exception:
+            fa_list = []
+
+        # FP fallback if ESPN yields none
+        if len(fa_list) == 0:
+            source_used = "FantasyPros"
+            key = {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}[pos]
+            df_fp = fp_weekly.get(key, pd.DataFrame())
+            if not df_fp.empty and "FPTS" in df_fp.columns:
+                df_fp = df_fp[~df_fp["Player"].isin(rostered_names)].copy()
+                # ensure team/bye present from prior parser
+                df_fp["FPTS_num"] = pd.to_numeric(df_fp["FPTS"], errors="coerce").fillna(0.0)
+                df_fp.sort_values("FPTS_num", ascending=False, inplace=True)
+                df_fp = df_fp.head(fa_size)
+                fa_list = [
+                    FPPlayer(
+                        row["Player"], pos,
+                        team=row.get("FP_Team", "N/A"),
+                        bye=row.get("FP_Bye", "N/A")
+                    )
+                    for _, row in df_fp.iterrows()
+                ]
+
+        for fa in fa_list:
+            drop = lowest_drop_candidate(pos)
+            if not drop:
+                # no one to drop for this position — skip scoring but show info with zero deltas
+                fa_w = get_proj_week(fa)
+                rows.append({
+                    "Player": fa.name,
+                    "Pos": pos,
+                    "Team": getattr(fa, "proTeam", "N/A"),
+                    "Bye": getattr(fa, "bye_week", "N/A"),
+                    "Source": source_used,
+                    "Weekly": round(fa_w, 1),
+                    "ROS ESPN": round(get_ros_espn(fa), 1),
+                    "ROS FP": round(get_ros_fp(fa), 1),
+                    "Δ Weekly": 0.0,
+                    "Δ ROS": 0.0,
+                    "Starts?": "Unknown (no drop)",
+                    "Score": 0.0,
+                    "Suggested Bid ($)": 0.0
+                })
+                continue
+
+            # Gains vs your best drop
+            fa_w = get_proj_week(fa)
+            fa_re = get_ros_espn(fa)
+            fa_rf = get_ros_fp(fa)
+
+            drop_w = get_proj_week(drop)
+            drop_re = get_ros_espn(drop)
+            drop_rf = get_ros_fp(drop)
+
+            d_w = max(0.0, fa_w - drop_w)
+            d_ros = max(0.0, max(fa_re - drop_re, fa_rf - drop_rf))  # take best of ESPN/FP ROS gain
+
+            # Core score: normalized weekly & ROS gains + start bonus + positional weight
+            start_bonus = 0.2 if would_start(fa) else 0.0
+            # Normalize: assume 5 pts weekly, 50 pts ROS are "meaningful"
+            score = (d_w / 5.0) + (d_ros / 50.0) + start_bonus
+            score *= pos_w.get(pos, 1.0)
+
+            # Suggested FAAB bid %: soft cap and scale
+            # Map score to 0–1, then limit by max_bid_pct
+            pct = min(max_bid_pct / 100.0, 0.05 + 0.35 * min(1.0, score))  # base 5% + up to 35% for elite scores
+            bid = round(pct * budget_remaining, 0)
+
+            rows.append({
+                "Player": fa.name,
+                "Pos": pos,
+                "Team": getattr(fa, "proTeam", "N/A"),
+                "Bye": getattr(fa, "bye_week", "N/A"),
+                "Source": source_used,
+                "Weekly": round(fa_w, 1),
+                "ROS ESPN": round(fa_re, 1),
+                "ROS FP": round(fa_rf, 1),
+                "Δ Weekly": round(d_w, 1),
+                "Δ ROS": round(d_ros, 1),
+                "Starts?": "Yes" if would_start(fa) else "No",
+                "Score": round(score, 3),
+                "Suggested Bid ($)": int(bid)
+            })
+
+    if not rows:
+        st.info("No free agents available from ESPN or FP fallback for the selected positions.")
+    else:
+        dfw = pd.DataFrame(rows)
+
+        # Filters
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            pos_filter = st.multiselect("Filter positions", target_positions, default=target_positions)
+        with f2:
+            starters_only = st.checkbox("Only players who would start", value=False)
+        with f3:
+            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN", "FantasyPros"])
+
+        view = dfw[dfw["Pos"].isin(pos_filter)]
+        view = view[view["Source"].isin(source_filter)]
+        if starters_only:
+            view = view[view["Starts?"] == "Yes"]
+
+        # Sort by Score, then Δ Weekly, then Δ ROS
+        view = view.sort_values(by=["Score", "Δ Weekly", "Δ ROS"], ascending=False)
+
+        st.dataframe(
+            view[
+                ["Player", "Pos", "Team", "Bye", "Source", "Weekly", "ROS ESPN", "ROS FP",
+                 "Δ Weekly", "Δ ROS", "Starts?", "Score", "Suggested Bid ($)"]
+            ],
+            use_container_width=True
+        )
+
+        # Download CSV
+        csv = view.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Waiver Recommendations (CSV)", data=csv, file_name="waiver_tracker.csv", mime="text/csv")
+
