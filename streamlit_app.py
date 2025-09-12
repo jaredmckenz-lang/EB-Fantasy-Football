@@ -8,7 +8,8 @@ from espn_api.football import League
 
 st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
 
-# ---------- helpers ----------
+# ============== Utilities & Helpers ==============
+
 def safe_proj(val):
     try:
         return float(val or 0)
@@ -16,9 +17,10 @@ def safe_proj(val):
         return 0.0
 
 # ---------- FantasyPros scrapers (BeautifulSoup, no lxml) ----------
+
 @st.cache_data(ttl=6*60*60)
 def _fetch_fp_table(url: str) -> pd.DataFrame:
-    """Generic fetcher for FantasyPros tables with id='data'. Extracts Player, Team, and optional Bye."""
+    """Fetch FantasyPros table with id='data'. Extract Player, FP_Team, FP_Bye if present."""
     import re
     res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
     res.raise_for_status()
@@ -26,6 +28,7 @@ def _fetch_fp_table(url: str) -> pd.DataFrame:
     table = soup.find("table", {"id": "data"})
     if not table:
         return pd.DataFrame()
+
     thead = table.find("thead")
     tbody = table.find("tbody")
     headers = [th.get_text(strip=True) for th in thead.find_all("th")]
@@ -36,19 +39,16 @@ def _fetch_fp_table(url: str) -> pd.DataFrame:
             rows.append(cols)
     df = pd.DataFrame(rows, columns=headers)
 
-    # If there's a Player column, extract team from "Player (TEAM)" and keep a clean name too
     if "Player" in df.columns:
-        # preserve original for parsing team in parentheses
         df["_Player_raw"] = df["Player"]
-        # Extract (TEAM) from raw player string
+
         def extract_team(raw):
             m = re.search(r"\(([^)]+)\)", raw or "")
             return m.group(1) if m else "N/A"
+
         df["FP_Team"] = df["_Player_raw"].apply(extract_team)
-        # Clean player name (drop parentheses)
         df["Player"] = df["_Player_raw"].str.replace(r"\s+\(.*\)", "", regex=True)
 
-    # Some FP tables include a "Bye" column; if not, fill N/A
     if "Bye" in df.columns:
         df["FP_Bye"] = df["Bye"]
     else:
@@ -58,7 +58,7 @@ def _fetch_fp_table(url: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=6*60*60)
 def fetch_all_fantasypros_weekly(scoring="ppr") -> dict:
-    """Weekly projections for all positions (qb, rb, wr, te, k, dst)."""
+    """Weekly projections for all positions."""
     pos_list = ["qb", "rb", "wr", "te", "k", "dst"]
     data = {}
     for pos in pos_list:
@@ -72,10 +72,7 @@ def fetch_all_fantasypros_weekly(scoring="ppr") -> dict:
 
 @st.cache_data(ttl=6*60*60)
 def fetch_all_fantasypros_season(scoring="ppr") -> dict:
-    """
-    Season-long (draft/ROS) projections for all positions.
-    FantasyPros uses week=draft for season totals.
-    """
+    """Season-long totals for all positions (week=draft page)."""
     pos_list = ["qb", "rb", "wr", "te", "k", "dst"]
     data = {}
     for pos in pos_list:
@@ -88,6 +85,7 @@ def fetch_all_fantasypros_season(scoring="ppr") -> dict:
     return data
 
 # ---------- Projection functions ----------
+
 def _pos_key(player):
     return {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}.get(getattr(player,"position","").upper())
 
@@ -99,7 +97,7 @@ def _match_fp_row(df: pd.DataFrame, name: str):
     return hits.iloc[0] if not hits.empty else None
 
 def get_proj_week(player, week=None):
-    """Weekly projection (uses ESPN only / FP fallback / FP only based on toggle)."""
+    """Weekly projection (ESPN only / FP fallback / FP only based on sidebar toggle)."""
     if week is None:
         week = league.current_week
 
@@ -125,13 +123,11 @@ def get_proj_week(player, week=None):
         df = fp_weekly.get(key, pd.DataFrame())
         row = _match_fp_row(df, player.name)
         if row is not None:
-            # FP weekly tables have 'FPTS' total
-            val = row.get("FPTS", 0)
-            return safe_proj(val)
+            return safe_proj(row.get("FPTS", 0))
     return 0.0
 
 def get_ros_espn(player, start_week=None):
-    """ESPN Rest-of-Season: sum of remaining weekly projected stats."""
+    """ESPN Rest-of-Season: sum of future weekly projected stats."""
     try:
         if start_week is None:
             start_week = league.current_week
@@ -152,27 +148,8 @@ def get_ros_fp(player):
     df = fp_season.get(key, pd.DataFrame())
     row = _match_fp_row(df, player.name)
     if row is not None:
-        # FP season tables also have 'FPTS' for season total
         return safe_proj(row.get("FPTS", 0))
     return 0.0
-
-# Build a set of all rostered player names in the league (for FP fallback)
-def get_all_rostered_names(league):
-    names = set()
-    for t in league.teams:
-        for p in t.roster:
-            names.add(p.name.strip())
-    return names
-
-# Tiny shim so FP fallback rows can be treated like ESPN player objects
-class FPPlayer:
-    def __init__(self, name, position, team="N/A", bye="N/A"):
-        self.name = name
-        self.position = position
-        self.proTeam = team
-        self.bye_week = bye
-
-        # properties used elsewhere remain absent (and safely ignored)
 
 def format_injury(player):
     status = getattr(player, "injuryStatus", None)
@@ -181,7 +158,7 @@ def format_injury(player):
     return f"⚠️ {text} ({status})" if status else text
 
 def build_optimizer(roster, starting_slots):
-    # Group by slot; include FLEX pool
+    """Group by slot, sort by weekly proj, pick starters without dupes; return lineup & bench."""
     groups = {k: [] for k in ["QB","RB","WR","TE","D/ST","K","FLEX"]}
     for p in roster:
         pos = getattr(p, "position", "")
@@ -189,7 +166,6 @@ def build_optimizer(roster, starting_slots):
             groups[pos].append(p)
     for pos in ["RB","WR","TE"]:
         groups["FLEX"].extend(groups[pos])
-    # Sort by weekly projection
     for pos in groups:
         groups[pos].sort(key=lambda p: get_proj_week(p), reverse=True)
     used = set()
@@ -211,9 +187,9 @@ def connect_league():
 
     with st.sidebar:
         st.header("Settings")
-        league_id = st.number_input("League ID", value=league_id, step=1)
-        team_id = st.number_input("Team ID", value=team_id, min_value=1, step=1)
-        year = st.number_input("Season", value=year, min_value=2018, step=1)
+        league_id = st.number_input("League ID", value=league_id, step=1, key="sb_league_id")
+        team_id = st.number_input("Team ID", value=team_id, min_value=1, step=1, key="sb_team_id")
+        year = st.number_input("Season", value=year, min_value=2018, step=1, key="sb_year")
         st.caption("Using Streamlit secrets for credentials. You can override IDs above.")
 
     if not espn_s2 or not swid:
@@ -224,42 +200,8 @@ def connect_league():
     team = league.teams[int(team_id) - 1]
     return league, team
 
-# ---------- app ----------
-st.title("🏈 Fantasy Football Weekly Starter Optimizer")
-
-league, my_team = connect_league()
-st.subheader(f"Team: **{my_team.team_name}** ({my_team.team_abbrev})")
-
-# Projection source (weekly only)
-with st.sidebar:
-    st.header("Projection Source")
-    proj_source = st.radio(
-        "Choose weekly projections",
-        ["ESPN only", "FantasyPros fallback", "FantasyPros only"],
-        index=1
-    )
-
-# Fetch FantasyPros weekly + season once
-fp_weekly = fetch_all_fantasypros_weekly()
-fp_season = fetch_all_fantasypros_season()
-
-# Lineup slots
-with st.expander("Lineup Slots", expanded=True):
-    c1, c2, c3, c4 = st.columns(4)
-    QB  = c1.number_input("QB", 1, 3, 1)
-    RB  = c2.number_input("RB", 1, 5, 2)
-    WR  = c3.number_input("WR", 1, 5, 2)
-    TE  = c4.number_input("TE", 1, 3, 1)
-    c5, c6, c7 = st.columns(3)
-    FLEX = c5.number_input("FLEX (RB/WR/TE)", 0, 3, 1)
-    DST  = c6.number_input("D/ST", 0, 2, 1)
-    K    = c7.number_input("K", 0, 2, 1)
-
-starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
-
-# --- League settings helpers (waivers/deadlines) ---
+# ---------- League settings helpers (waivers/deadlines) ----------
 def _get_setting(league, *names, default=None):
-    """Try to read a setting from league.settings first, then league itself."""
     settings = getattr(league, "settings", None)
     for n in names:
         if settings is not None and hasattr(settings, n):
@@ -269,10 +211,6 @@ def _get_setting(league, *names, default=None):
     return default
 
 def get_league_waiver_info(league):
-    """
-    Return a dict with best-effort fields commonly present in ESPN leagues.
-    Not all leagues expose all fields; we show what we can find.
-    """
     return {
         "waiver_type": _get_setting(league, "waiverType", "waiver_type", default="N/A"),
         "process_day": _get_setting(league, "waiverProcessDay", "waiver_day_of_week", default="N/A"),
@@ -282,14 +220,10 @@ def get_league_waiver_info(league):
         "timezone": _get_setting(league, "timezone", default="N/A"),
     }
 
-# --- Trade summary scoring helper ---
+# ---------- Trade verdict helper ----------
 def trade_summary_verdict(team_gain_wk, team_gain_rosE, team_gain_rosF):
-    """
-    Build a friendly verdict for a team given net gains:
-    score combines weekly + best of ROS (ESPN/FP).
-    """
     ros_gain = max(team_gain_rosE, team_gain_rosF)
-    score = (team_gain_wk / 5.0) + (ros_gain / 50.0)  # normalize
+    score = (team_gain_wk / 5.0) + (ros_gain / 50.0)  # normalized
     if score >= 1.0:
         return "🟢 Strong Accept", score
     if score >= 0.5:
@@ -300,8 +234,57 @@ def trade_summary_verdict(team_gain_wk, team_gain_rosE, team_gain_rosF):
         return "🟠 Lean Decline", score
     return "🔴 Strong Decline", score
 
+# ---------- FA fallback helpers ----------
+def get_all_rostered_names(league):
+    names = set()
+    for t in league.teams:
+        for p in t.roster:
+            names.add(p.name.strip())
+    return names
 
-# Tabs (added 🛒 Free Agents)
+class FPPlayer:
+    def __init__(self, name, position, team="N/A", bye="N/A"):
+        self.name = name
+        self.position = position
+        self.proTeam = team
+        self.bye_week = bye
+
+# ============== App ==============
+
+st.title("🏈 Fantasy Football Weekly Starter Optimizer")
+
+league, my_team = connect_league()
+st.subheader(f"Team: **{my_team.team_name}** ({my_team.team_abbrev})")
+
+# projection source (weekly)
+with st.sidebar:
+    st.header("Projection Source")
+    proj_source = st.radio(
+        "Choose weekly projections",
+        ["ESPN only", "FantasyPros fallback", "FantasyPros only"],
+        index=1,
+        key="sb_proj_source"
+    )
+
+# Fetch FP data (weekly + season) once
+fp_weekly = fetch_all_fantasypros_weekly()
+fp_season = fetch_all_fantasypros_season()
+
+# Lineup slots
+with st.expander("Lineup Slots", expanded=True):
+    c1, c2, c3, c4 = st.columns(4)
+    QB  = c1.number_input("QB", 1, 3, 1, key="ls_qb")
+    RB  = c2.number_input("RB", 1, 5, 2, key="ls_rb")
+    WR  = c3.number_input("WR", 1, 5, 2, key="ls_wr")
+    TE  = c4.number_input("TE", 1, 3, 1, key="ls_te")
+    c5, c6, c7 = st.columns(3)
+    FLEX = c5.number_input("FLEX (RB/WR/TE)", 0, 3, 1, key="ls_flex")
+    DST  = c6.number_input("D/ST", 0, 2, 1, key="ls_dst")
+    K    = c7.number_input("K", 0, 2, 1, key="ls_k")
+
+starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
+
+# Tabs (include Waiver Tracker)
 tabs = st.tabs([
     "✅ Optimizer",
     "🔍 Matchups",
@@ -309,9 +292,8 @@ tabs = st.tabs([
     "🛒 Free Agents",
     "📈 Logs",
     "📊 Advanced Stats",
-    "🧾 Waiver Tracker"  # NEW TAB (appended to avoid reindexing other tabs)
+    "🧾 Waiver Tracker"
 ])
-
 
 # ----- Optimizer -----
 with tabs[0]:
@@ -324,8 +306,7 @@ with tabs[0]:
             st.write(
                 f"**{slot}**: {p.name} — "
                 f"{get_proj_week(p):.1f} (This Week) | "
-                f"{get_ros_espn(p):.1f} (ROS ESPN) | "
-                f"{get_ros_fp(p):.1f} (ROS FP)"
+                f"{get_ros_espn(p):.1f} (ROS ESPN) | {get_ros_fp(p):.1f} (ROS FP)"
             )
 
     st.markdown("### Bench")
@@ -355,11 +336,8 @@ with tabs[1]:
 # ----- Trade Analyzer -----
 with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
-    st.caption(
-        f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FantasyPros season totals."
-    )
+    st.caption(f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FantasyPros season totals.")
 
-    # Build team dropdowns
     team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
     team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
     default_idx = next((i for i, label in enumerate(team_options)
@@ -367,17 +345,16 @@ with tabs[2]:
 
     colA, colB = st.columns(2)
     with colA:
-        teamA_label = st.selectbox("Team A", team_options, index=default_idx)
+        teamA_label = st.selectbox("Team A", team_options, index=default_idx, key="ta_team_a")
     with colB:
         alt_idx = 1 if default_idx == 0 and len(team_options) > 1 else 0
-        teamB_label = st.selectbox("Team B", team_options, index=alt_idx)
+        teamB_label = st.selectbox("Team B", team_options, index=alt_idx, key="ta_team_b")
 
     teamA = team_lookup[teamA_label]
     teamB = team_lookup[teamB_label]
 
     if teamA.team_id != teamB.team_id:
 
-        # helper: table display for players
         def table(players, title):
             rows = [{
                 "Player": p.name,
@@ -392,7 +369,6 @@ with tabs[2]:
             else:
                 st.caption("None selected.")
 
-        # helpers for roster selection
         def roster_names(team):
             return [f"{p.name} — {p.position} ({get_proj_week(p):.1f} wk / {get_ros_fp(p):.1f} ROS-FP)" for p in team.roster]
 
@@ -400,17 +376,15 @@ with tabs[2]:
             pname = name_str.split(" — ")[0]
             return next((p for p in team.roster if p.name == pname), None)
 
-        # selections
         col1, col2 = st.columns(2)
         with col1:
-            send_A_labels = st.multiselect(f"{teamA_label} sends", options=roster_names(teamA))
+            send_A_labels = st.multiselect(f"{teamA_label} sends", options=roster_names(teamA), key="ta_send_a")
         with col2:
-            send_B_labels = st.multiselect(f"{teamB_label} sends", options=roster_names(teamB))
+            send_B_labels = st.multiselect(f"{teamB_label} sends", options=roster_names(teamB), key="ta_send_b")
 
         send_A = [string_to_player(lbl, teamA) for lbl in send_A_labels]
         send_B = [string_to_player(lbl, teamB) for lbl in send_B_labels]
 
-        # totals
         def totals(players):
             wk = sum(get_proj_week(p) for p in players)
             ros_espn = sum(get_ros_espn(p) for p in players)
@@ -420,7 +394,6 @@ with tabs[2]:
         A_wk, A_rosE, A_rosF = totals(send_A)
         B_wk, B_rosE, B_rosF = totals(send_B)
 
-        # net summaries
         st.markdown("#### 📈 Trade Summary")
         st.write(f"**This Week ({proj_source})** → {teamA.team_abbrev} net: {B_wk - A_wk:+.1f}, "
                  f"{teamB.team_abbrev} net: {A_wk - B_wk:+.1f}")
@@ -429,7 +402,7 @@ with tabs[2]:
         st.write(f"**ROS FP** → {teamA.team_abbrev} net: {B_rosF - A_rosF:+.1f}, "
                  f"{teamB.team_abbrev} net: {A_rosF - B_rosF:+.1f}")
 
-        # verdicts using helper
+        # verdicts
         A_gain_wk = B_wk - A_wk
         B_gain_wk = A_wk - B_wk
         A_gain_rosE = B_rosE - A_rosE
@@ -449,7 +422,6 @@ with tabs[2]:
             st.write(f"**{teamB.team_name} ({teamB.team_abbrev})**: {b_verdict}")
             st.caption(f"Net gains — Weekly: {B_gain_wk:+.1f} | ROS ESPN: {B_gain_rosE:+.1f} | ROS FP: {B_gain_rosF:+.1f}  (score: {b_score:.2f})")
 
-        # emphasis
         if a_score > b_score + 0.2:
             st.success(f"👍 {teamA.team_abbrev} clearly benefits by our model.")
         elif b_score > a_score + 0.2:
@@ -457,7 +429,6 @@ with tabs[2]:
         else:
             st.info("Pretty even trade by our model — league context & needs matter.")
 
-        # players involved
         st.markdown("#### 📋 Players Involved")
         cL, cR = st.columns(2)
         with cL:
@@ -470,7 +441,6 @@ with tabs[2]:
     else:
         st.warning("Pick two different teams to evaluate a trade.")
 
-
 # ----- Free Agents -----
 with tabs[3]:
     st.markdown("### 🛒 Free Agents — Add/Drop Recommendations")
@@ -479,12 +449,10 @@ with tabs[3]:
         "falls back to FantasyPros weekly projections minus all rostered players in your league."
     )
 
-    # Tuning knobs
-    fa_size = st.slider("How many free agents per position to scan", 10, 200, 60, step=10)
-    weekly_threshold = st.number_input("Worth-it threshold (Δ Weekly points)", 0.0, 20.0, 2.0, step=0.5)
-    ros_threshold = st.number_input("Worth-it threshold (Δ ROS points)", 0.0, 300.0, 18.0, step=1.0)
+    fa_size = st.slider("How many free agents per position to scan", 10, 200, 60, step=10, key="fa_size")
+    weekly_threshold = st.number_input("Worth-it threshold (Δ Weekly points)", 0.0, 20.0, 2.0, step=0.5, key="fa_weekly_thr")
+    ros_threshold = st.number_input("Worth-it threshold (Δ ROS points)", 0.0, 300.0, 18.0, step=1.0, key="fa_ros_thr")
 
-    # Build your current best lineup
     my_roster = my_team.roster
     lineup, bench = build_optimizer(my_roster, starting_slots)
 
@@ -516,33 +484,26 @@ with tabs[3]:
                 return True
         return False
 
-    # Build FA table with ESPN first, FP fallback
     rows = []
     positions_to_scan = ["QB", "RB", "WR", "TE", "K", "D/ST"]
     rostered_names = get_all_rostered_names(league)
-
     espn_counts, fp_counts = {}, {}
 
     for pos in positions_to_scan:
-        # Try ESPN free agents
         fa_list = []
         source_used = "ESPN"
         try:
-            try_pos = pos
             try:
-                fa_list = league.free_agents(position=try_pos, size=fa_size)
+                fa_list = league.free_agents(position=pos, size=fa_size)
             except Exception:
                 if pos == "D/ST":
                     fa_list = league.free_agents(position="DST", size=fa_size)
-                else:
-                    raise
         except Exception as e:
             st.warning(f"Could not fetch ESPN free agents for {pos}: {e}")
             fa_list = []
 
         espn_counts[pos] = len(fa_list)
 
-        # FP fallback if ESPN returned zero
         if len(fa_list) == 0:
             source_used = "FantasyPros"
             key = {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}[pos]
@@ -554,21 +515,20 @@ with tabs[3]:
                 df_fp = df_fp.head(fa_size)
                 fa_list = [
                     FPPlayer(
-                        row["Player"],
-                        pos,
+                        row["Player"], pos,
                         team=row.get("FP_Team", "N/A"),
                         bye=row.get("FP_Bye", "N/A")
                     )
-    for _, row in df_fp.iterrows()
-]
+                    for _, row in df_fp.iterrows()
+                ]
             fp_counts[pos] = len(fa_list)
         else:
-            fp_counts[pos] = 0  # not used
+            fp_counts[pos] = 0
 
         for fa in fa_list:
-            fa_w = get_proj_week(fa)                # weekly uses chosen source toggle
-            fa_re = get_ros_espn(fa)                # ROS ESPN
-            fa_rf = get_ros_fp(fa)                  # ROS FP (season)
+            fa_w = get_proj_week(fa)
+            fa_re = get_ros_espn(fa)
+            fa_rf = get_ros_fp(fa)
 
             drop_cand, drop_w, drop_re, drop_rf = lowest_bench_candidate(pos)
 
@@ -601,7 +561,6 @@ with tabs[3]:
                 "Verdict": verdict
             })
 
-    # Summary/debug
     with st.expander("Debug: FA source counts per position"):
         dbg = pd.DataFrame({
             "Position": positions_to_scan,
@@ -619,13 +578,13 @@ with tabs[3]:
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            pos_filter = st.multiselect("Filter positions", positions_to_scan, default=positions_to_scan)
+            pos_filter = st.multiselect("Filter positions", positions_to_scan, default=positions_to_scan, key="fa_pos_filter")
         with c2:
-            only_recommended = st.checkbox("Show only recommended adds (✅)", value=False)
+            only_recommended = st.checkbox("Show only recommended adds (✅)", value=False, key="fa_only_recommended")
         with c3:
-            only_starters = st.checkbox("Show only FAs who would start", value=False)
+            only_starters = st.checkbox("Show only FAs who would start", value=False, key="fa_only_starters")
         with c4:
-            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN","FantasyPros"])
+            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN","FantasyPros"], key="fa_source_filter")
 
         view = df_fa[df_fa["Pos"].isin(pos_filter)]
         view = view[view["Source"].isin(source_filter)]
@@ -635,14 +594,9 @@ with tabs[3]:
             view = view[view["Would Start?"] == "Yes"]
 
         st.dataframe(view.drop(columns=["Recommended"]), use_container_width=True)
-        st.caption(
-            "Verdict rules: Add if Δ Weekly ≥ threshold OR Δ ROS (ESPN/FP) ≥ threshold. "
-            "‘Starts’ if FA outprojects your worst starter at that position (or FLEX). "
-            "Source shows where the FA list came from (ESPN or FantasyPros fallback)."
-        )
+        st.caption("Verdict rules: Add if Δ Weekly ≥ threshold OR Δ ROS (ESPN/FP) ≥ threshold. ‘Starts’ if FA outprojects your worst starter at that position (or FLEX).")
     else:
         st.info("No free agents found (even with FantasyPros fallback). Try increasing the 'How many free agents' slider.")
-
 
 # ----- Logs -----
 with tabs[4]:
@@ -654,7 +608,7 @@ with tabs[4]:
     colC.metric("Projected Total (ROS FP)", f"{sum(get_ros_fp(p) for p in my_team.roster):.1f}")
 
     log_file = "performance_log.csv"
-    if st.button("📊 Log This Week"):
+    if st.button("📊 Log This Week", key="logs_log_button"):
         row = {
             "Week": week,
             "Team": my_team.team_name,
@@ -695,7 +649,6 @@ with tabs[5]:
     else:
         st.dataframe(df)
 
-        # Grouped bar chart: Weekly vs ROS ESPN vs ROS FP
         df_melt = df.melt(
             id_vars=["Player", "Pos"],
             value_vars=[f"Weekly ({proj_source})", "ROS ESPN", "ROS FP"],
@@ -716,7 +669,7 @@ with tabs[5]:
         )
         st.altair_chart(chart, use_container_width=True)
 
-    if st.checkbox("🔍 Show raw ESPN projection debug"):
+    if st.checkbox("🔍 Show raw ESPN projection debug", key="adv_debug_checkbox"):
         debug = []
         for p in roster:
             debug.append({
@@ -727,51 +680,51 @@ with tabs[5]:
         st.dataframe(pd.DataFrame(debug))
 
 # ----- Waiver Tracker -----
-with tabs[-1]:
+with tabs[6]:
     st.markdown("### 🧾 Waiver Wire Tracker")
     st.caption(
-        "Ranks free agents by **expected gain** vs your best drop and suggests a FAAB bid. "
+        "Ranks free agents by expected gain vs your best drop and suggests a FAAB bid. "
         "Weekly projections use your sidebar source; ROS uses both ESPN and FP (season)."
     )
-# League waiver details
-info = get_league_waiver_info(league)
-st.markdown("#### 🗓️ League Waivers & Deadlines")
-cwa, cwb, cwc, cwd = st.columns(4)
-cwa.metric("Waiver Type", str(info["waiver_type"]))
-cwb.metric("Process Day", str(info["process_day"]))
-cwc.metric("Process Hour", f'{info["process_hour"]}:00' if info["process_hour"] != "N/A" else "N/A")
-cwd.metric("Waiver Period (hrs)", str(info["waiver_hours"]))
-st.caption(f'Trade deadline: **{info["trade_deadline"]}**  |  Timezone: **{info["timezone"]}**')
-st.divider()
 
-# Controls  👈 no indent here
-cA, cB, cC, cD = st.columns(4)
-with cA:
-    fa_size = st.slider("FA pool per position", 10, 200, 60, step=10)
-with cB:
-    budget_remaining = st.number_input("Your remaining FAAB ($)", min_value=0, value=100, step=5)
-with cC:
-    max_bid_pct = st.slider("Max bid % of budget", 5, 80, 30, step=5)
-with cD:
-    target_positions = st.multiselect(
-        "Positions to consider",
-        ["RB", "WR", "QB", "TE", "D/ST", "K"],
-        default=["RB", "WR", "TE", "QB"]
-    )
+    # League waiver details banner
+    info = get_league_waiver_info(league)
+    st.markdown("#### 🗓️ League Waivers & Deadlines")
+    cwa, cwb, cwc, cwd = st.columns(4)
+    cwa.metric("Waiver Type", str(info["waiver_type"]))
+    cwb.metric("Process Day", str(info["process_day"]))
+    cwc.metric("Process Hour", f'{info["process_hour"]}:00' if info["process_hour"] != "N/A" else "N/A")
+    cwd.metric("Waiver Period (hrs)", str(info["waiver_hours"]))
+    st.caption(f'Trade deadline: **{info["trade_deadline"]}**  |  Timezone: **{info["timezone"]}**')
+    st.divider()
 
+    # Controls
+    cA, cB, cC, cD = st.columns(4)
+    with cA:
+        wt_fa_size = st.slider("FA pool per position", 10, 200, 60, step=10, key="wt_pool_size")
+    with cB:
+        budget_remaining = st.number_input("Your remaining FAAB ($)", min_value=0, value=100, step=5, key="wt_budget")
+    with cC:
+        max_bid_pct = st.slider("Max bid % of budget", 5, 80, 30, step=5, key="wt_max_bid_pct")
+    with cD:
+        target_positions = st.multiselect(
+            "Positions to consider",
+            ["RB", "WR", "QB", "TE", "D/ST", "K"],
+            default=["RB", "WR", "TE", "QB"],
+            key="wt_target_positions",
+        )
 
-    # Positional scarcity multipliers (tweak if you like)
     st.markdown("**Positional weights** (scarcity/impact)")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    w_rb = c1.number_input("RB w", 0.5, 2.0, 1.5, 0.1)
-    w_wr = c2.number_input("WR w", 0.5, 2.0, 1.3, 0.1)
-    w_te = c3.number_input("TE w", 0.5, 2.0, 1.2, 0.1)
-    w_qb = c4.number_input("QB w", 0.5, 2.0, 1.0, 0.1)
-    w_dst = c5.number_input("D/ST w", 0.5, 2.0, 0.7, 0.1)
-    w_k = c6.number_input("K w", 0.5, 2.0, 0.6, 0.1)
+    d1, d2, d3, d4, d5, d6 = st.columns(6)
+    w_rb = d1.number_input("RB w", 0.5, 2.0, 1.5, 0.1, key="wt_w_rb")
+    w_wr = d2.number_input("WR w", 0.5, 2.0, 1.3, 0.1, key="wt_w_wr")
+    w_te = d3.number_input("TE w", 0.5, 2.0, 1.2, 0.1, key="wt_w_te")
+    w_qb = d4.number_input("QB w", 0.5, 2.0, 1.0, 0.1, key="wt_w_qb")
+    w_dst = d5.number_input("D/ST w", 0.5, 2.0, 0.7, 0.1, key="wt_w_dst")
+    w_k = d6.number_input("K w", 0.5, 2.0, 0.6, 0.1, key="wt_w_k")
     pos_w = {"RB": w_rb, "WR": w_wr, "TE": w_te, "QB": w_qb, "D/ST": w_dst, "K": w_k}
 
-    # Build current optimized lineup + bench for drop comps
+    # Build lineup & bench for comparisons
     my_roster = my_team.roster
     lineup, bench = build_optimizer(my_roster, starting_slots)
     starters_by_pos = {k: lineup.get(k, []) for k in ["QB", "RB", "WR", "TE", "K", "D/ST"]}
@@ -780,16 +733,13 @@ with cD:
     def is_flex_eligible(pos): return pos in flex_eligible
 
     def lowest_drop_candidate(position):
-        """Worst drop candidate: prefer bench same-pos; if none and FLEX-eligible, use FLEX bench pool."""
         same_pos = [p for p in bench if getattr(p, "position", "") == position]
         pool = same_pos or ([p for p in bench if getattr(p, "position", "") in flex_eligible] if is_flex_eligible(position) else [])
         if not pool:
             return None
-        # safest drop = lowest ROS FP, tie-break by weekly
         return sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))[0]
 
     def would_start(player):
-        """Would this player beat your worst starter at their slot or FLEX?"""
         pos = getattr(player, "position", "")
         w = get_proj_week(player)
         slot_starters = starters_by_pos.get(pos, [])
@@ -803,34 +753,30 @@ with cD:
                 return True
         return False
 
-    # Get FA lists (ESPN first, FP fallback) similar to Free Agents tab
     rostered_names = get_all_rostered_names(league)
     rows = []
 
     for pos in target_positions:
-        # Try ESPN FAs
         fa_list = []
         source_used = "ESPN"
         try:
             try:
-                fa_list = league.free_agents(position=pos, size=fa_size)
+                fa_list = league.free_agents(position=pos, size=wt_fa_size)
             except Exception:
                 if pos == "D/ST":
-                    fa_list = league.free_agents(position="DST", size=fa_size)
+                    fa_list = league.free_agents(position="DST", size=wt_fa_size)
         except Exception:
             fa_list = []
 
-        # FP fallback if ESPN yields none
         if len(fa_list) == 0:
             source_used = "FantasyPros"
             key = {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}[pos]
             df_fp = fp_weekly.get(key, pd.DataFrame())
             if not df_fp.empty and "FPTS" in df_fp.columns:
                 df_fp = df_fp[~df_fp["Player"].isin(rostered_names)].copy()
-                # ensure team/bye present from prior parser
                 df_fp["FPTS_num"] = pd.to_numeric(df_fp["FPTS"], errors="coerce").fillna(0.0)
                 df_fp.sort_values("FPTS_num", ascending=False, inplace=True)
-                df_fp = df_fp.head(fa_size)
+                df_fp = df_fp.head(wt_fa_size)
                 fa_list = [
                     FPPlayer(
                         row["Player"], pos,
@@ -843,62 +789,41 @@ with cD:
         for fa in fa_list:
             drop = lowest_drop_candidate(pos)
             if not drop:
-                # no one to drop for this position — skip scoring but show info with zero deltas
                 fa_w = get_proj_week(fa)
                 rows.append({
-                    "Player": fa.name,
-                    "Pos": pos,
-                    "Team": getattr(fa, "proTeam", "N/A"),
-                    "Bye": getattr(fa, "bye_week", "N/A"),
-                    "Source": source_used,
-                    "Weekly": round(fa_w, 1),
-                    "ROS ESPN": round(get_ros_espn(fa), 1),
-                    "ROS FP": round(get_ros_fp(fa), 1),
-                    "Δ Weekly": 0.0,
-                    "Δ ROS": 0.0,
-                    "Starts?": "Unknown (no drop)",
-                    "Score": 0.0,
-                    "Suggested Bid ($)": 0.0
+                    "Player": fa.name, "Pos": pos,
+                    "Team": getattr(fa, "proTeam", "N/A"), "Bye": getattr(fa, "bye_week", "N/A"),
+                    "Source": source_used, "Weekly": round(fa_w, 1),
+                    "ROS ESPN": round(get_ros_espn(fa), 1), "ROS FP": round(get_ros_fp(fa), 1),
+                    "Δ Weekly": 0.0, "Δ ROS": 0.0, "Starts?": "Unknown (no drop)",
+                    "Score": 0.0, "Suggested Bid ($)": 0
                 })
                 continue
 
-            # Gains vs your best drop
             fa_w = get_proj_week(fa)
             fa_re = get_ros_espn(fa)
             fa_rf = get_ros_fp(fa)
-
             drop_w = get_proj_week(drop)
             drop_re = get_ros_espn(drop)
             drop_rf = get_ros_fp(drop)
 
             d_w = max(0.0, fa_w - drop_w)
-            d_ros = max(0.0, max(fa_re - drop_re, fa_rf - drop_rf))  # take best of ESPN/FP ROS gain
-
-            # Core score: normalized weekly & ROS gains + start bonus + positional weight
+            d_ros = max(0.0, max(fa_re - drop_re, fa_rf - drop_rf))
             start_bonus = 0.2 if would_start(fa) else 0.0
-            # Normalize: assume 5 pts weekly, 50 pts ROS are "meaningful"
             score = (d_w / 5.0) + (d_ros / 50.0) + start_bonus
             score *= pos_w.get(pos, 1.0)
 
-            # Suggested FAAB bid %: soft cap and scale
-            # Map score to 0–1, then limit by max_bid_pct
-            pct = min(max_bid_pct / 100.0, 0.05 + 0.35 * min(1.0, score))  # base 5% + up to 35% for elite scores
-            bid = round(pct * budget_remaining, 0)
+            pct = min(max_bid_pct / 100.0, 0.05 + 0.35 * min(1.0, score))
+            bid = int(round(pct * budget_remaining, 0))
 
             rows.append({
-                "Player": fa.name,
-                "Pos": pos,
-                "Team": getattr(fa, "proTeam", "N/A"),
-                "Bye": getattr(fa, "bye_week", "N/A"),
-                "Source": source_used,
-                "Weekly": round(fa_w, 1),
-                "ROS ESPN": round(fa_re, 1),
-                "ROS FP": round(fa_rf, 1),
-                "Δ Weekly": round(d_w, 1),
-                "Δ ROS": round(d_ros, 1),
+                "Player": fa.name, "Pos": pos,
+                "Team": getattr(fa, "proTeam", "N/A"), "Bye": getattr(fa, "bye_week", "N/A"),
+                "Source": source_used, "Weekly": round(fa_w, 1),
+                "ROS ESPN": round(fa_re, 1), "ROS FP": round(fa_rf, 1),
+                "Δ Weekly": round(d_w, 1), "Δ ROS": round(d_ros, 1),
                 "Starts?": "Yes" if would_start(fa) else "No",
-                "Score": round(score, 3),
-                "Suggested Bid ($)": int(bid)
+                "Score": round(score, 3), "Suggested Bid ($)": bid
             })
 
     if not rows:
@@ -906,21 +831,19 @@ with cD:
     else:
         dfw = pd.DataFrame(rows)
 
-        # Filters
         f1, f2, f3 = st.columns(3)
         with f1:
-            pos_filter = st.multiselect("Filter positions", target_positions, default=target_positions)
+            pos_filter = st.multiselect("Filter positions", target_positions, default=target_positions, key="waiver_pos_filter")
         with f2:
-            starters_only = st.checkbox("Only players who would start", value=False)
+            starters_only = st.checkbox("Only players who would start", value=False, key="waiver_starters_only")
         with f3:
-            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN", "FantasyPros"])
+            source_filter = st.multiselect("Source", ["ESPN", "FantasyPros"], default=["ESPN", "FantasyPros"], key="waiver_source_filter")
 
         view = dfw[dfw["Pos"].isin(pos_filter)]
         view = view[view["Source"].isin(source_filter)]
         if starters_only:
             view = view[view["Starts?"] == "Yes"]
 
-        # Sort by Score, then Δ Weekly, then Δ ROS
         view = view.sort_values(by=["Score", "Δ Weekly", "Δ ROS"], ascending=False)
 
         st.dataframe(
@@ -930,8 +853,6 @@ with cD:
             ],
             use_container_width=True
         )
-
-        # Download CSV
         csv = view.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Waiver Recommendations (CSV)", data=csv, file_name="waiver_tracker.csv", mime="text/csv")
-
+        st.download_button("⬇️ Download Waiver Recommendations (CSV)", data=csv,
+                           file_name="waiver_tracker.csv", mime="text/csv")
