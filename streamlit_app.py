@@ -362,6 +362,7 @@ with tabs[1]:
         cards = []
         my_game = None
 
+        # collect matchups
         for m in league.box_scores():
             home, away = m.home_team, m.away_team
             hp = safe_proj(getattr(home, "projected_total", 0))
@@ -370,11 +371,13 @@ with tabs[1]:
             if my_team.team_id in [home.team_id, away.team_id]:
                 my_game = (home, hp, away, ap)
 
+        # league summary
         if cards:
             avg_proj = sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
             st.markdown(f"**League avg projected points (per team):** {avg_proj:.1f}")
             st.divider()
 
+        # each game
         for home, hp, away, ap in cards:
             st.write(f"**{home.team_name}** ({home.team_abbrev}) vs **{away.team_name}** ({away.team_abbrev})")
             st.progress(min(int(hp * 2), 100), text=f"{home.team_abbrev}: {hp:.1f} pts")
@@ -383,6 +386,7 @@ with tabs[1]:
             st.caption(f"Projected margin: {home.team_abbrev if margin >= 0 else away.team_abbrev} {abs(margin):.1f}")
             st.divider()
 
+        # your game highlight
         if my_game:
             home, hp, away, ap = my_game
             margin = hp - ap if home.team_id == my_team.team_id else ap - hp
@@ -391,10 +395,10 @@ with tabs[1]:
                 f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — "
                 f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
             )
+
     except Exception as e:
         st.info("Matchup data not available yet.")
         st.caption(str(e))
-
 
 # ----- Trade Analyzer -----
 with tabs[2]:
