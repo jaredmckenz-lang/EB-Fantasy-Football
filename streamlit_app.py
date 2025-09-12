@@ -436,19 +436,22 @@ elif b_score > a_score + 0.2:
 else:
     st.info("Pretty even trade by our model — league context & needs matter.")
 
-        def table(players, title):
-            rows = [{
-                "Player": p.name,
-                "Pos": getattr(p, "position", ""),
-                f"Weekly ({proj_source})": get_proj_week(p),
-                "ROS ESPN": get_ros_espn(p),
-                "ROS FP": get_ros_fp(p),
-            } for p in players]
-            st.markdown(f"**{title}**")
-            if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True)
-            else:
-                st.caption("None selected.")
+# 👇 move this out (no indent under else)
+def table(players, title):
+    rows = [{
+        "Player": p.name,
+        "Pos": getattr(p, "position", ""),
+        f"Weekly ({proj_source})": get_proj_week(p),
+        "ROS ESPN": get_ros_espn(p),
+        "ROS FP": get_ros_fp(p),
+    } for p in players]
+
+    st.markdown(f"**{title}**")
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    else:
+        st.caption("None selected.")
+
 
         st.markdown("#### 📋 Players Involved")
         cL, cR = st.columns(2)
