@@ -507,38 +507,41 @@ with tabs[2]:
             table(send_B, f"{teamB_label} sends")
             table(send_A, f"{teamB_label} receives")
 
-    else:
+       else:
         st.warning("Pick two different teams to evaluate a trade.")
-        # --- Example good trade scenarios (single 1-for-1 ideas) ---
-        st.markdown("#### 💡 Example trade ideas (1-for-1)")
-        ideas = []
-        # use your bench as trade chips; scan opponents' rosters for upgrades at same position
-        your_bench = [p for p in my_team.roster if p not in sum(build_optimizer(my_team.roster, starting_slots)[0].values(), [])]
-        for opp in league.teams:
-            if opp.team_id == my_team.team_id:
-                continue
-            for yp in your_bench:
-                pos = getattr(yp, "position", "")
-                # opponent candidates at same position
-                for tp in opp.roster:
-                    if getattr(tp, "position", "") != pos:
-                        continue
-                    gain_w = get_proj_week(tp) - get_proj_week(yp)
-                    gain_ros = max(get_ros_espn(tp) - get_ros_espn(yp), get_ros_fp(tp) - get_ros_fp(yp))
-                    score = (gain_w / 5.0) + (gain_ros / 50.0)
-                    if gain_w > 0 or gain_ros > 0:
-                        ideas.append({
-                            "You give": f"{yp.name} ({pos})",
-                            "You get": f"{tp.name} ({opp.team_abbrev})",
-                            "Δ Weekly": round(gain_w, 1),
-                            "Δ ROS (best of ESPN/FP)": round(gain_ros, 1),
-                            "Score": round(score, 3)
-                        })
-        if ideas:
-            df_ideas = pd.DataFrame(ideas).sort_values(["Score","Δ Weekly","Δ ROS (best of ESPN/FP)"], ascending=False).head(10)
-            st.dataframe(df_ideas, use_container_width=True)
-        else:
-            st.caption("No obvious 1-for-1 upgrades found. Try multi-player trades.")
+
+    # --- Example good trade scenarios (single 1-for-1 ideas) ---
+    st.markdown("#### 💡 Example trade ideas (1-for-1)")
+    ideas = []
+    # use your bench as trade chips; scan opponents' rosters for upgrades at same position
+    your_bench = [p for p in my_team.roster if p not in sum(build_optimizer(my_team.roster, starting_slots)[0].values(), [])]
+    for opp in league.teams:
+        if opp.team_id == my_team.team_id:
+            continue
+        for yp in your_bench:
+            pos = getattr(yp, "position", "")
+            for tp in opp.roster:
+                if getattr(tp, "position", "") != pos:
+                    continue
+                gain_w = get_proj_week(tp) - get_proj_week(yp)
+                gain_ros = max(get_ros_espn(tp) - get_ros_espn(yp), get_ros_fp(tp) - get_ros_fp(yp))
+                score = (gain_w / 5.0) + (gain_ros / 50.0)
+                if gain_w > 0 or gain_ros > 0:
+                    ideas.append({
+                        "You give": f"{yp.name} ({pos})",
+                        "You get": f"{tp.name} ({opp.team_abbrev})",
+                        "Δ Weekly": round(gain_w, 1),
+                        "Δ ROS (best of ESPN/FP)": round(gain_ros, 1),
+                        "Score": round(score, 3)
+                    })
+    if ideas:
+        df_ideas = pd.DataFrame(ideas).sort_values(
+            ["Score","Δ Weekly","Δ ROS (best of ESPN/FP)"], ascending=False
+        ).head(10)
+        st.dataframe(df_ideas, use_container_width=True)
+    else:
+        st.caption("No obvious 1-for-1 upgrades found. Try multi-player trades.")
+
 
 # ----- Free Agents -----
 with tabs[3]:
@@ -955,19 +958,30 @@ with tabs[6]:
         csv = view.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Waiver Recommendations (CSV)", data=csv,
                            file_name="waiver_tracker.csv", mime="text/csv")
+        
 # ----- What-If Lineup (simulate adding a FA) -----
 with tabs[7]:
     st.markdown("### 🧪 What-If: If I picked up a free agent, my starting lineup would be…")
-    st.caption("Choose a free agent and (optionally) a drop. We’ll recompute your optimized lineup and show the deltas.")
+    st.caption("Pick a free agent and (optionally) a drop. We’ll recompute your optimized lineup and show the deltas.")
 
-    # Build a candidate FA list (ESPN first, FP fallback) — reuse logic from Free Agents
-    positions_to_scan = ["QB", "RB", "WR", "TE", "K", "D/ST"]
+    # Controls
+    c0, c1 = st.columns([1, 2])
+    with c0:
+        size = st.slider("FA pool per position", 10, 200, 40, step=10, key="whatif_pool_size")
+    with c1:
+        whatif_positions = st.multiselect(
+            "Positions to scan",
+            ["QB", "RB", "WR", "TE", "K", "D/ST"],
+            default=["RB", "WR", "TE", "QB"],
+            key="whatif_positions",
+        )
+
+    # Build a candidate FA pool (ESPN first, FP fallback)
     rostered_names = get_all_rostered_names(league)
     fa_pool = []
-    size = st.slider("FA pool per position to consider", 10, 150, 40, step=10, key="whatif_pool_size")
 
-    for pos in positions_to_scan:
-        # try ESPN
+    for pos in whatif_positions:
+        # Try ESPN
         f = []
         try:
             try:
@@ -977,7 +991,8 @@ with tabs[7]:
                     f = league.free_agents(position="DST", size=size)
         except Exception:
             f = []
-        # fallback FP
+
+        # FP fallback
         if not f:
             key = {"QB":"qb","RB":"rb","WR":"wr","TE":"te","K":"k","D/ST":"dst"}[pos]
             df = fp_weekly.get(key, pd.DataFrame())
@@ -986,46 +1001,70 @@ with tabs[7]:
                 df["FPTS_num"] = pd.to_numeric(df["FPTS"], errors="coerce").fillna(0.0)
                 df.sort_values("FPTS_num", ascending=False, inplace=True)
                 df = df.head(size)
-                f = [FPPlayer(r["Player"], pos, team=r.get("FP_Team","N/A"), bye=r.get("FP_Bye","N/A")) for _, r in df.iterrows()]
+                f = [
+                    FPPlayer(
+                        row["Player"],
+                        pos,
+                        team=row.get("FP_Team", "N/A"),
+                        bye=row.get("FP_Bye", "N/A"),
+                    )
+                    for _, row in df.iterrows()
+                ]
         fa_pool.extend(f)
 
-    # selections
-    names = [f"{p.name} — {getattr(p,'position','')} ({get_proj_week(p):.1f} wk / {get_ros_fp(p):.1f} ROS-FP)" for p in fa_pool]
+    # Selections
+    def label_for(p):
+        return f"{p.name} — {getattr(p,'position','')} ({get_proj_week(p):.1f} wk / {get_ros_fp(p):.1f} ROS-FP)"
+
+    names = [label_for(p) for p in fa_pool]
     pick = st.selectbox("Free agent to add", options=["— pick a player —"] + names, key="whatif_pick")
     drop_opts = ["(auto choose best drop)"] + [f"{p.name} — {p.position}" for p in my_team.roster]
     drop_sel = st.selectbox("Who would you drop?", options=drop_opts, key="whatif_drop")
 
     if pick and pick != "— pick a player —":
         fa = fa_pool[names.index(pick)]
+
         # Decide drop
         if drop_sel == "(auto choose best drop)":
-            # same logic as in FA tab: lowest by ROS FP then weekly among bench; if none, lowest weekly overall
             current_lineup, current_bench = build_optimizer(my_team.roster, starting_slots)
             pool = current_bench or my_team.roster
-            drop = sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))[0]
+            drop = sorted(pool, key=lambda p: (get_ros_fp(p), get_proj_week(p)))[0] if pool else None
         else:
             drop_name = drop_sel.split(" — ")[0]
             drop = next((p for p in my_team.roster if p.name == drop_name), None)
 
-        # build hypothetical roster
-        hypo_roster = [p for p in my_team.roster if p != drop] + [fa]
+        # Build hypothetical roster
+        if drop is not None:
+            hypo_roster = [p for p in my_team.roster if p != drop] + [fa]
+        else:
+            # If we couldn't determine a drop, just add the FA (useful for viewing lineup impact if league allows extra slots)
+            hypo_roster = list(my_team.roster) + [fa]
 
-        # compute both current and what-if lineups & totals
+        # Compute current and what-if lineups & totals
         cur_lineup, _ = build_optimizer(my_team.roster, starting_slots)
         new_lineup, _ = build_optimizer(hypo_roster, starting_slots)
 
-        def total(lineup):
-            return sum(get_proj_week(p) for plist in lineup.values() for p in plist), \
-                   sum(get_ros_espn(p) for plist in lineup.values() for p in plist), \
-                   sum(get_ros_fp(p) for plist in lineup.values() for p in plist)
+        def totals(lineup):
+            wk = sum(get_proj_week(p) for plist in lineup.values() for p in plist)
+            re = sum(get_ros_espn(p) for plist in lineup.values() for p in plist)
+            rf = sum(get_ros_fp(p) for plist in lineup.values() for p in plist)
+            return wk, re, rf
 
-        cur_w, cur_re, cur_rf = total(cur_lineup)
-        new_w, new_re, new_rf = total(new_lineup)
+        cur_w, cur_re, cur_rf = totals(cur_lineup)
+        new_w, new_re, new_rf = totals(new_lineup)
 
-        st.markdown("#### Result")
-        st.write(f"**Weekly**: {new_w:.1f} ({new_w - cur_w:+.1f}) | **ROS ESPN**: {new_re:.1f} ({new_re - cur_re:+.1f}) | **ROS FP**: {new_rf:.1f} ({new_rf - cur_rf:+.1f})")
-        st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
+        # Summary metrics
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Weekly (This Week)", f"{new_w:.1f}", delta=f"{new_w - cur_w:+.1f}")
+        m2.metric("ROS ESPN", f"{new_re:.1f}", delta=f"{new_re - cur_re:+.1f}")
+        m3.metric("ROS FP", f"{new_rf:.1f}", delta=f"{new_rf - cur_rf:+.1f}")
 
+        st.caption(
+            f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position}, {getattr(fa,'proTeam','N/A')})**  |  "
+            f"Bye: **{getattr(fa,'bye_week','N/A')}**"
+        )
+
+        # Side-by-side lineups
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**Current lineup**")
@@ -1037,3 +1076,5 @@ with tabs[7]:
             for slot, plist in new_lineup.items():
                 for p in plist:
                     st.write(f"{slot}: {p.name} — {get_proj_week(p):.1f}")
+    else:
+        st.info("Pick a free agent above to simulate your lineup change.")
