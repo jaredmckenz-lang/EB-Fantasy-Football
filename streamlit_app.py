@@ -257,6 +257,50 @@ with st.expander("Lineup Slots", expanded=True):
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
+# --- League settings helpers (waivers/deadlines) ---
+def _get_setting(league, *names, default=None):
+    """Try to read a setting from league.settings first, then league itself."""
+    settings = getattr(league, "settings", None)
+    for n in names:
+        if settings is not None and hasattr(settings, n):
+            return getattr(settings, n)
+        if hasattr(league, n):
+            return getattr(league, n)
+    return default
+
+def get_league_waiver_info(league):
+    """
+    Return a dict with best-effort fields commonly present in ESPN leagues.
+    Not all leagues expose all fields; we show what we can find.
+    """
+    return {
+        "waiver_type": _get_setting(league, "waiverType", "waiver_type", default="N/A"),
+        "process_day": _get_setting(league, "waiverProcessDay", "waiver_day_of_week", default="N/A"),
+        "process_hour": _get_setting(league, "waiverProcessHour", "waiver_hour", default="N/A"),
+        "waiver_hours": _get_setting(league, "waiverHours", "waiver_hours", default="N/A"),
+        "trade_deadline": _get_setting(league, "tradeDeadlineDate", "trade_deadline", "tradeDeadline", default="N/A"),
+        "timezone": _get_setting(league, "timezone", default="N/A"),
+    }
+
+# --- Trade summary scoring helper ---
+def trade_summary_verdict(team_gain_wk, team_gain_rosE, team_gain_rosF):
+    """
+    Build a friendly verdict for a team given net gains:
+    score combines weekly + best of ROS (ESPN/FP).
+    """
+    ros_gain = max(team_gain_rosE, team_gain_rosF)
+    score = (team_gain_wk / 5.0) + (ros_gain / 50.0)  # normalize
+    if score >= 1.0:
+        return "🟢 Strong Accept", score
+    if score >= 0.5:
+        return "🟡 Lean Accept", score
+    if score > -0.3:
+        return "⚪ Neutral / Even", score
+    if score > -0.8:
+        return "🟠 Lean Decline", score
+    return "🔴 Strong Decline", score
+
+
 # Tabs (added 🛒 Free Agents)
 tabs = st.tabs([
     "✅ Optimizer",
@@ -364,6 +408,33 @@ with tabs[2]:
                  f"{teamB.team_abbrev} net: {A_rosE - B_rosE:+.1f}")
         st.write(f"**ROS FP** → {teamA.team_abbrev} net: {B_rosF - A_rosF:+.1f}, "
                  f"{teamB.team_abbrev} net: {A_rosF - B_rosF:+.1f}")
+# --- Verdict summary for each team ---
+A_gain_wk = B_wk - A_wk
+B_gain_wk = A_wk - B_wk
+A_gain_rosE = B_rosE - A_rosE
+B_gain_rosE = A_rosE - B_rosE
+A_gain_rosF = B_rosF - A_rosF
+B_gain_rosF = A_rosF - B_rosF
+
+a_verdict, a_score = trade_summary_verdict(A_gain_wk, A_gain_rosE, A_gain_rosF)
+b_verdict, b_score = trade_summary_verdict(B_gain_wk, B_gain_rosE, B_gain_rosF)
+
+st.markdown("#### 🧠 Trade Verdicts")
+colV1, colV2 = st.columns(2)
+with colV1:
+    st.write(f"**{teamA.team_name} ({teamA.team_abbrev})**: {a_verdict}")
+    st.caption(f"Net gains — Weekly: {A_gain_wk:+.1f} | ROS ESPN: {A_gain_rosE:+.1f} | ROS FP: {A_gain_rosF:+.1f}  (score: {a_score:.2f})")
+with colV2:
+    st.write(f"**{teamB.team_name} ({teamB.team_abbrev})**: {b_verdict}")
+    st.caption(f"Net gains — Weekly: {B_gain_wk:+.1f} | ROS ESPN: {B_gain_rosE:+.1f} | ROS FP: {B_gain_rosF:+.1f}  (score: {b_score:.2f})")
+
+# Color emphasis (optional UX)
+if a_score > b_score + 0.2:
+    st.success(f"👍 {teamA.team_abbrev} clearly benefits by our model.")
+elif b_score > a_score + 0.2:
+    st.success(f"👍 {teamB.team_abbrev} clearly benefits by our model.")
+else:
+    st.info("Pretty even trade by our model — league context & needs matter.")
 
         def table(players, title):
             rows = [{
@@ -652,6 +723,16 @@ with tabs[-1]:
         "Ranks free agents by **expected gain** vs your best drop and suggests a FAAB bid. "
         "Weekly projections use your sidebar source; ROS uses both ESPN and FP (season)."
     )
+# League waiver details
+info = get_league_waiver_info(league)
+st.markdown("#### 🗓️ League Waivers & Deadlines")
+cwa, cwb, cwc, cwd = st.columns(4)
+cwa.metric("Waiver Type", str(info["waiver_type"]))
+cwb.metric("Process Day", str(info["process_day"]))
+cwc.metric("Process Hour", f'{info["process_hour"]}:00' if info["process_hour"] != "N/A" else "N/A")
+cwd.metric("Waiver Period (hrs)", str(info["waiver_hours"]))
+st.caption(f'Trade deadline: **{info["trade_deadline"]}**  |  Timezone: **{info["timezone"]}**')
+st.divider()
 
     # Controls
     cA, cB, cC, cD = st.columns(4)
