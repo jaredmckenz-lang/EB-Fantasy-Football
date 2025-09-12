@@ -426,7 +426,7 @@ with tabs[2]:
 
     teamA = team_lookup[teamA_label]
     teamB = team_lookup[teamB_label]
-
+    
     if teamA.team_id != teamB.team_id:
 
         def table(players, title):
@@ -511,8 +511,8 @@ with tabs[2]:
         with cR:
             table(send_B, f"{teamB_label} sends")
             table(send_A, f"{teamB_label} receives")
-    else:
-        st.warning("Pick two different teams to evaluate a trade.")
+        else:
+            st.warning("Pick two different teams to evaluate a trade.")
 
     # --- Example good trade scenarios (single 1-for-1 ideas) ---
     st.markdown("#### 💡 Example trade ideas (1-for-1)")
