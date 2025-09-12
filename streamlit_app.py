@@ -359,9 +359,9 @@ with tabs[2]:
         f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FantasyPros season totals."
     )
 
+    # Build team dropdowns
     team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
     team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
-
     default_idx = next((i for i, label in enumerate(team_options)
                         if team_lookup[label].team_id == my_team.team_id), 0)
 
@@ -376,6 +376,23 @@ with tabs[2]:
     teamB = team_lookup[teamB_label]
 
     if teamA.team_id != teamB.team_id:
+
+        # helper: table display for players
+        def table(players, title):
+            rows = [{
+                "Player": p.name,
+                "Pos": getattr(p, "position", ""),
+                f"Weekly ({proj_source})": get_proj_week(p),
+                "ROS ESPN": get_ros_espn(p),
+                "ROS FP": get_ros_fp(p),
+            } for p in players]
+            st.markdown(f"**{title}**")
+            if rows:
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+            else:
+                st.caption("None selected.")
+
+        # helpers for roster selection
         def roster_names(team):
             return [f"{p.name} — {p.position} ({get_proj_week(p):.1f} wk / {get_ros_fp(p):.1f} ROS-FP)" for p in team.roster]
 
@@ -383,6 +400,7 @@ with tabs[2]:
             pname = name_str.split(" — ")[0]
             return next((p for p in team.roster if p.name == pname), None)
 
+        # selections
         col1, col2 = st.columns(2)
         with col1:
             send_A_labels = st.multiselect(f"{teamA_label} sends", options=roster_names(teamA))
@@ -392,6 +410,7 @@ with tabs[2]:
         send_A = [string_to_player(lbl, teamA) for lbl in send_A_labels]
         send_B = [string_to_player(lbl, teamB) for lbl in send_B_labels]
 
+        # totals
         def totals(players):
             wk = sum(get_proj_week(p) for p in players)
             ros_espn = sum(get_ros_espn(p) for p in players)
@@ -401,6 +420,7 @@ with tabs[2]:
         A_wk, A_rosE, A_rosF = totals(send_A)
         B_wk, B_rosE, B_rosF = totals(send_B)
 
+        # net summaries
         st.markdown("#### 📈 Trade Summary")
         st.write(f"**This Week ({proj_source})** → {teamA.team_abbrev} net: {B_wk - A_wk:+.1f}, "
                  f"{teamB.team_abbrev} net: {A_wk - B_wk:+.1f}")
@@ -408,51 +428,36 @@ with tabs[2]:
                  f"{teamB.team_abbrev} net: {A_rosE - B_rosE:+.1f}")
         st.write(f"**ROS FP** → {teamA.team_abbrev} net: {B_rosF - A_rosF:+.1f}, "
                  f"{teamB.team_abbrev} net: {A_rosF - B_rosF:+.1f}")
-# --- Verdict summary for each team ---
-A_gain_wk = B_wk - A_wk
-B_gain_wk = A_wk - B_wk
-A_gain_rosE = B_rosE - A_rosE
-B_gain_rosE = A_rosE - B_rosE
-A_gain_rosF = B_rosF - A_rosF
-B_gain_rosF = A_rosF - B_rosF
 
-a_verdict, a_score = trade_summary_verdict(A_gain_wk, A_gain_rosE, A_gain_rosF)
-b_verdict, b_score = trade_summary_verdict(B_gain_wk, B_gain_rosE, B_gain_rosF)
+        # verdicts using helper
+        A_gain_wk = B_wk - A_wk
+        B_gain_wk = A_wk - B_wk
+        A_gain_rosE = B_rosE - A_rosE
+        B_gain_rosE = A_rosE - B_rosE
+        A_gain_rosF = B_rosF - A_rosF
+        B_gain_rosF = A_rosF - B_rosF
 
-st.markdown("#### 🧠 Trade Verdicts")
-colV1, colV2 = st.columns(2)
-with colV1:
-    st.write(f"**{teamA.team_name} ({teamA.team_abbrev})**: {a_verdict}")
-    st.caption(f"Net gains — Weekly: {A_gain_wk:+.1f} | ROS ESPN: {A_gain_rosE:+.1f} | ROS FP: {A_gain_rosF:+.1f}  (score: {a_score:.2f})")
-with colV2:
-    st.write(f"**{teamB.team_name} ({teamB.team_abbrev})**: {b_verdict}")
-    st.caption(f"Net gains — Weekly: {B_gain_wk:+.1f} | ROS ESPN: {B_gain_rosE:+.1f} | ROS FP: {B_gain_rosF:+.1f}  (score: {b_score:.2f})")
+        a_verdict, a_score = trade_summary_verdict(A_gain_wk, A_gain_rosE, A_gain_rosF)
+        b_verdict, b_score = trade_summary_verdict(B_gain_wk, B_gain_rosE, B_gain_rosF)
 
-# Color emphasis (optional UX)
-if a_score > b_score + 0.2:
-    st.success(f"👍 {teamA.team_abbrev} clearly benefits by our model.")
-elif b_score > a_score + 0.2:
-    st.success(f"👍 {teamB.team_abbrev} clearly benefits by our model.")
-else:
-    st.info("Pretty even trade by our model — league context & needs matter.")
+        st.markdown("#### 🧠 Trade Verdicts")
+        colV1, colV2 = st.columns(2)
+        with colV1:
+            st.write(f"**{teamA.team_name} ({teamA.team_abbrev})**: {a_verdict}")
+            st.caption(f"Net gains — Weekly: {A_gain_wk:+.1f} | ROS ESPN: {A_gain_rosE:+.1f} | ROS FP: {A_gain_rosF:+.1f}  (score: {a_score:.2f})")
+        with colV2:
+            st.write(f"**{teamB.team_name} ({teamB.team_abbrev})**: {b_verdict}")
+            st.caption(f"Net gains — Weekly: {B_gain_wk:+.1f} | ROS ESPN: {B_gain_rosE:+.1f} | ROS FP: {B_gain_rosF:+.1f}  (score: {b_score:.2f})")
 
-# 👇 move this out (no indent under else)
-def table(players, title):
-    rows = [{
-        "Player": p.name,
-        "Pos": getattr(p, "position", ""),
-        f"Weekly ({proj_source})": get_proj_week(p),
-        "ROS ESPN": get_ros_espn(p),
-        "ROS FP": get_ros_fp(p),
-    } for p in players]
+        # emphasis
+        if a_score > b_score + 0.2:
+            st.success(f"👍 {teamA.team_abbrev} clearly benefits by our model.")
+        elif b_score > a_score + 0.2:
+            st.success(f"👍 {teamB.team_abbrev} clearly benefits by our model.")
+        else:
+            st.info("Pretty even trade by our model — league context & needs matter.")
 
-    st.markdown(f"**{title}**")
-    if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
-    else:
-        st.caption("None selected.")
-
-
+        # players involved
         st.markdown("#### 📋 Players Involved")
         cL, cR = st.columns(2)
         with cL:
@@ -461,8 +466,10 @@ def table(players, title):
         with cR:
             table(send_B, f"{teamB_label} sends")
             table(send_A, f"{teamB_label} receives")
+
     else:
         st.warning("Pick two different teams to evaluate a trade.")
+
 
 # ----- Free Agents -----
 with tabs[3]:
