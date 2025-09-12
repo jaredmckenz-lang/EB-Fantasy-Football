@@ -399,7 +399,6 @@ with tabs[1]:
                 f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
             )
             st.info(msg)
-
     except Exception as e:
         st.info("Matchup data not available yet.")
         st.caption(str(e))
