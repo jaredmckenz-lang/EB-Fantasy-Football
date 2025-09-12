@@ -744,20 +744,21 @@ cwd.metric("Waiver Period (hrs)", str(info["waiver_hours"]))
 st.caption(f'Trade deadline: **{info["trade_deadline"]}**  |  Timezone: **{info["timezone"]}**')
 st.divider()
 
-    # Controls
-    cA, cB, cC, cD = st.columns(4)
-    with cA:
-        fa_size = st.slider("FA pool per position", 10, 200, 60, step=10)
-    with cB:
-        budget_remaining = st.number_input("Your remaining FAAB ($)", min_value=0, value=100, step=5)
-    with cC:
-        max_bid_pct = st.slider("Max bid % of budget", 5, 80, 30, step=5)
-    with cD:
-        target_positions = st.multiselect(
-            "Positions to consider",
-            ["RB", "WR", "QB", "TE", "D/ST", "K"],
-            default=["RB", "WR", "TE", "QB"]
-        )
+# Controls  👈 no indent here
+cA, cB, cC, cD = st.columns(4)
+with cA:
+    fa_size = st.slider("FA pool per position", 10, 200, 60, step=10)
+with cB:
+    budget_remaining = st.number_input("Your remaining FAAB ($)", min_value=0, value=100, step=5)
+with cC:
+    max_bid_pct = st.slider("Max bid % of budget", 5, 80, 30, step=5)
+with cD:
+    target_positions = st.multiselect(
+        "Positions to consider",
+        ["RB", "WR", "QB", "TE", "D/ST", "K"],
+        default=["RB", "WR", "TE", "QB"]
+    )
+
 
     # Positional scarcity multipliers (tweak if you like)
     st.markdown("**Positional weights** (scarcity/impact)")
