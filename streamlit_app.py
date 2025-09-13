@@ -428,7 +428,45 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("### 📊 This Week's Matchups & Projections")
     st.caption(f"Week {league.current_week}")
-    st.info("Matchups render OK (minimal block).")
+
+    cards = []
+    my_game = None
+
+    for m in league.box_scores():
+        home, away = m.home_team, m.away_team
+        hp = safe_proj(getattr(home, "projected_total", 0))
+        ap = safe_proj(getattr(away, "projected_total", 0))
+        cards.append((home, hp, away, ap))
+        if my_team.team_id in (home.team_id, away.team_id):
+            my_game = (home, hp, away, ap)
+
+    if cards:
+        avg_proj = sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
+        st.markdown(
+            f"**League avg projected points (per team):** {avg_proj:.1f}"
+        )
+        st.divider()
+
+    for home, hp, away, ap in cards:
+        st.write(
+            f"**{home.team_name}** ({home.team_abbrev}) vs "
+            f"**{away.team_name}** ({away.team_abbrev})"
+        )
+        st.progress(min(int(hp * 2), 100), text=f"{home.team_abbrev}: {hp:.1f} pts")
+        st.progress(min(int(ap * 2), 100), text=f"{away.team_abbrev}: {ap:.1f} pts")
+        fav = home.team_abbrev if (hp - ap) >= 0 else away.team_abbrev
+        st.caption(f"Projected margin: {fav} {abs(hp - ap):.1f}")
+        st.divider()
+
+    if my_game:
+        home, hp, away, ap = my_game
+        margin = hp - ap if home.team_id == my_team.team_id else ap - hp
+        tilt = "favored" if margin >= 0 else "underdog"
+        st.info(
+            f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — "
+            f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
+        )
+
 
 # ----- Trade Analyzer -----
 with tabs[2]:
