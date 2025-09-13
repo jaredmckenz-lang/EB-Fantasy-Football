@@ -426,85 +426,78 @@ with tabs[0]:
         st.dataframe(df_why, use_container_width=True)
 # ----- Matchups -----
 with tabs[1]:
-    st.markdown("### This Week's Matchups & Projections")
+    st.markdown("### 📊 This Week’s Matchups & Projections")
+    try:
+        st.caption(f"Week {league.current_week}")
 
-    def _render_matchups():
-        try:
-            st.caption(f"Week {league.current_week}")
+        cards = []
+        my_game = None
 
-            cards = []
-            my_game = None
+        # collect matchups
+        for m in league.box_scores():
+            home, away = m.home_team, m.away_team
+            hp = safe_proj(getattr(home, "projected_total", 0))
+            ap = safe_proj(getattr(away, "projected_total", 0))
+            cards.append((home, hp, away, ap))
 
-            for m in league.box_scores():
-                home, away = m.home_team, m.away_team
-                hp = safe_proj(getattr(home, "projected_total", 0))
-                ap = safe_proj(getattr(away, "projected_total", 0))
-                cards.append((home, hp, away, ap))
-                if my_team.team_id in (home.team_id, away.team_id):
-                    my_game = (home, hp, away, ap)
+            if my_team.team_id in [home.team_id, away.team_id]:
+                my_game = (home, hp, away, ap)
 
-            if cards:
-                avg_proj = (
-                    sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
-                )
-                st.markdown(
-                    f"**League avg projected points (per team):** {avg_proj:.1f}"
-                )
-                st.divider()
+        # league summary
+        if cards:
+            avg_proj = sum(hp + ap for _, hp, _, ap in cards) / (2 * len(cards))
+            st.markdown(
+                f"**League avg projected points (per team):** {avg_proj:.1f}"
+            )
+            st.divider()
 
-            for home, hp, away, ap in cards:
-                st.write(
-                    f"**{home.team_name}** ({home.team_abbrev}) vs "
-                    f"**{away.team_name}** ({away.team_abbrev})"
-                )
-                st.progress(
-                    min(int(hp * 2), 100),
-                    text=f"{home.team_abbrev}: {hp:.1f} pts",
-                )
-                st.progress(
-                    min(int(ap * 2), 100),
-                    text=f"{away.team_abbrev}: {ap:.1f} pts",
-                )
-                margin = hp - ap
-                fav = home.team_abbrev if margin >= 0 else away.team_abbrev
-                st.caption(f"Projected margin: {fav} {abs(margin):.1f}")
-                st.divider()
+        # each game
+        for home, hp, away, ap in cards:
+            st.write(
+                f"**{home.team_name}** ({home.team_abbrev}) vs "
+                f"**{away.team_name}** ({away.team_abbrev})"
+            )
+            st.progress(
+                min(int(hp * 2), 100),
+                text=f"{home.team_abbrev}: {hp:.1f} pts"
+            )
+            st.progress(
+                min(int(ap * 2), 100),
+                text=f"{away.team_abbrev}: {ap:.1f} pts"
+            )
+            margin = hp - ap
+            fav = home.team_abbrev if margin >= 0 else away.team_abbrev
+            st.caption(f"Projected margin: {fav} {abs(margin):.1f}")
+            st.divider()
 
-            if my_game:
-                home, hp, away, ap = my_game
-                margin = (
-                    hp - ap if home.team_id == my_team.team_id else ap - hp
-                )
-                tilt = "favored" if margin >= 0 else "underdog"
-                msg = (
-                    f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — "
-                    f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
-                )
-                st.info(msg)
+        # your game highlight
+        if my_game:
+            home, hp, away, ap = my_game
+            margin = hp - ap if home.team_id == my_team.team_id else ap - hp
+            tilt = "favored" if margin >= 0 else "underdog"
+            msg = (
+                f"**Your game:** {home.team_abbrev} vs {away.team_abbrev} — "
+                f"You are **{tilt}** by {abs(margin):.1f} (by projections)."
+            )
+            st.info(msg)
 
-        except Exception as e:
-            st.info("Matchup data not available yet.")
-            st.caption(str(e))
+    except Exception as e:
+        st.info("Matchup data not available yet.")
+        st.caption(str(e))
 
-    _render_matchups()
 # ----- Trade Analyzer -----
 with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
     st.caption(
-        f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FP season "
-        f"totals."
+        f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FantasyPros "
+        "season totals."
     )
 
-    team_options = [
-        f"{t.team_name} ({t.team_abbrev})" for t in league.teams
-    ]
-    team_lookup = {label: t for label in team_options for t in league.teams
-                   if label == f"{t.team_name} ({t.team_abbrev})"}
+    team_options = [f"{t.team_name} ({t.team_abbrev})" for t in league.teams]
+    team_lookup = {f"{t.team_name} ({t.team_abbrev})": t for t in league.teams}
     default_idx = next(
-        (
-            i for i, label in enumerate(team_options)
-            if team_lookup[label].team_id == my_team.team_id
-        ),
+        (i for i, label in enumerate(team_options)
+         if team_lookup[label].team_id == my_team.team_id),
         0,
     )
 
@@ -523,6 +516,8 @@ with tabs[2]:
     teamB = team_lookup[teamB_label]
 
     if teamA.team_id != teamB.team_id:
+        # trade analyzer code continues here...
+
 
         def table(players, title):
             rows = [
