@@ -488,7 +488,7 @@ with tabs[1]:
 
     _render_matchups()
 # ----- Trade Analyzer -----
-    with tabs[2]:
+with tabs[2]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
     st.caption(
         f"Weekly uses **{proj_source}**. ROS shows **both** ESPN and FP season "
