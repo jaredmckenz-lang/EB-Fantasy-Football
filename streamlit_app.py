@@ -623,11 +623,9 @@ with tabs[2]:
         with cR:
             table(send_B, f"{teamB_label} sends")
             table(send_A, f"{teamB_label} receives")
-
     else:
         st.warning("Pick two different teams to evaluate a trade.")
-
-    st.markdown("#### 💡 Example trade ideas (1-for-1)")
+        st.markdown("#### 💡 Example trade ideas (1-for-1)")
     ideas = []
     cur_lineup, _ = build_optimizer(my_team.roster, starting_slots)
     your_bench = [
