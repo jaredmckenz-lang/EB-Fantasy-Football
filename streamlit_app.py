@@ -169,6 +169,26 @@ def get_ros_fp(player):
         return safe_proj(row.get("FPTS", 0))
     return 0.0
 
+# --- safer ROS estimate for FAs / gaps in ESPN data ---
+def ros_estimate(player) -> float:
+    """
+    Best-effort ROS:
+      1) ESPN ROS (sum of weekly projected stats if present)
+      2) FP season projection (FPTS)
+      3) fallback = weeks_remaining * current weekly projection
+    """
+    val = get_ros_espn(player)
+    if val and val > 0:
+        return val
+
+    fp = get_ros_fp(player)
+    if fp and fp > 0:
+        return fp
+
+    wk = get_proj_week(player)
+    weeks_rem = max(0, 18 - int(getattr(league, "current_week", 1)))
+    return weeks_rem * wk
+
 
 def format_injury(player):
     status = getattr(player, "injuryStatus", None)
@@ -1102,15 +1122,22 @@ with tabs[6]:
             pool, key=lambda p: (get_ros_fp(p), get_proj_week(p))
         )[0]
 
-    def _would_start(player):
-        pos = getattr(player, "position", "")
-        w = get_proj_week(player)
-        slot_starters = starters_by_pos.get(pos, [])
-        if slot_starters:
-            worst = min(slot_starters, key=lambda p: get_proj_week(p))
-            if w > get_proj_week(worst):
-                return True
-        if _is_flex_eligible(pos) and lineup.get("FLEX"):
+    for pos in target_positions:
+    fa_list = []
+    source_used = "ESPN"
+
+    # --- fetch a LARGE pool from ESPN; cap later for display ---
+    try:
+        try:
+            fa_list = league.free_agents(position=pos, size=FA_FETCH_MAX)
+        except Exception:
+            if pos == "D/ST":
+                fa_list = league.free_agents(position="DST", size=FA_FETCH_MAX)
+    except Exception:
+        fa_list = []
+
+    # if ESPN returns nothing (offseason/etc), your FP fallback below can still run
+
             worst_flex = min(lineup["FLEX"], key=lambda p: get_proj_week(p))
             if w > get_proj_week(worst_flex):
                 return True
@@ -1153,27 +1180,28 @@ with tabs[6]:
                     for _, row in df_fp.iterrows()
                 ]
 
+        FA_FETCH_MAX = 500  # fetch a large pool from ESPN per position
+
         for fa in fa_list:
             drop = _lowest_drop_candidate(pos)
             if not drop:
                 fa_w = get_proj_week(fa)
-                rows.append(
-                    {
-                        "Player": fa.name,
-                        "Pos": pos,
-                        "Team": getattr(fa, "proTeam", "N/A"),
-                        "Bye": getattr(fa, "bye_week", "N/A"),
-                        "Source": source_used,
-                        "Weekly": round(fa_w, 1),
-                        "ROS ESPN": round(get_ros_espn(fa), 1),
-                        "ROS FP": round(get_ros_fp(fa), 1),
-                        "Δ Weekly": 0.0,
-                        "Δ ROS": 0.0,
-                        "Starts?": "Unknown (no drop)",
-                        "Score": 0.0,
-                        "Suggested Bid ($)": 0,
-                    }
-                )
+                rows.append({
+    "Player": fa.name,
+    "Pos": pos,
+    "Team": getattr(fa, "proTeam", "N/A"),
+    "Bye": getattr(fa, "bye_week", "N/A"),
+    "Source": source_used,
+    f"Weekly ({proj_source})": round(fa_w, 1),
+    "ROS (est.)": round(fa_ros, 1),          # <= new
+    "Drop": drop_name,
+    "Δ Weekly": round(delta_w, 1),
+    "Δ ROS (est.)": round(delta_ros, 1),     # <= new
+    "Would Start?": "Yes" if _would_start(fa) else "No",
+    "Starts?": "Yes" if _would_start(fa) else "No",  # if you use Starts? elsewhere
+    "Verdict": verdict,
+})
+
                 continue
 
             fa_w = get_proj_week(fa)
