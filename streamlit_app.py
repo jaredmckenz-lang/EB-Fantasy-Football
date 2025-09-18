@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import streamlit as st
-import altair as alt
+import altair as altair
 from types import ModuleType
 if not isinstance(alt, ModuleType) or not hasattr(alt, "Chart"):
     import altair as alt
@@ -518,9 +518,9 @@ with tabs[3]:
         st.dataframe(df_fa.head(fa_size), use_container_width=True)
 
 # =========================================
-# Tab 4: Waiver Tracker (uses same logic; shorter view)
+# Tab 6: Waiver Tracker (uses same logic; shorter view)
 # =========================================
-with tabs[4]:
+with tabs[6]:
     st.markdown("### 🧾 Waiver Wire Tracker")
     st.caption("Ranks FAs by Δ Weekly and Δ ROS (est.) vs best drop.")
 
@@ -538,9 +538,10 @@ with tabs[4]:
         st.info("Open the Free Agents tab first (or refresh).")
 
 # =========================================
-# Tab 5: What-If Lineup (simulate adding FA)
+# Tab 7: What-If Lineup (simulate adding FA)
 # =========================================
-with tabs[5]:
+with tabs[7]:
+
     st.markdown("### 🧪 What-If: If I picked up a free agent, my starting lineup would be…")
     size = st.slider("FA pool per position to consider", 10, 200, 50, step=10)
     rostered_names = get_all_rostered_names(league)
@@ -607,7 +608,7 @@ with tabs[5]:
         st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
 
 # ----- Advanced Stats -----
-with tabs[5]:  # make sure this matches where you put the tab
+with tabs[5]:
     st.markdown("### 📊 Advanced Player Stats")
 
     try:
@@ -635,7 +636,7 @@ with tabs[5]:  # make sure this matches where you put the tab
             )
             df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
-            # SAFEST way: import as altair and use altair.Chart
+            # Use altair explicitly to avoid any shadowing of `alt`
             import altair as altair
 
             chart = (
