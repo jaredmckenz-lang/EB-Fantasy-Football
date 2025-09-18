@@ -1,15 +1,16 @@
 import os
 import pandas as pd
 import streamlit as st
-import altair as altair
-from types import ModuleType
-if not isinstance(alt, ModuleType) or not hasattr(alt, "Chart"):
-    import altair as alt
+import altair as alt
 import requests
 from bs4 import BeautifulSoup
 from espn_api.football import League
 
-st.set_page_config(page_title="Fantasy Starter Optimizer", page_icon="🏈", layout="wide")
+st.set_page_config(
+    page_title="Fantasy Starter Optimizer",
+    page_icon="🏈",
+    layout="wide",
+)
 
 # =========================================
 # Utilities
@@ -19,6 +20,7 @@ def safe_float(x, default=0.0) -> float:
         return float(x)
     except Exception:
         return default
+
 
 # --------------- FantasyPros Scrape (no lxml) ---------------
 @st.cache_data(ttl=6 * 60 * 60)
@@ -272,18 +274,16 @@ with st.expander("Lineup Slots", expanded=True):
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
+# ---------- TABS (sequential, unique) ----------
 tabs = st.tabs([
-    "✅ Optimizer",
-    "🔍 Matchups",
-    "🔄 Trade Analyzer",
-    "🛒 Free Agents",
-    "📈 Logs",
-    "📊 Advanced Stats",  # <— Tab 6
-    "🧾 Waiver Tracker",
-    "🧪 What-If Lineup",
+    "✅ Optimizer",         # 0
+    "🔍 Matchups",         # 1
+    "🔄 Trade Analyzer",   # 2
+    "🛒 Free Agents",      # 3
+    "🧾 Waiver Tracker",   # 4
+    "🧪 What-If Lineup",   # 5
+    "📊 Advanced Stats",   # 6
 ])
-
-
 
 # =========================================
 # Tab 0: Optimizer
@@ -358,7 +358,7 @@ with tabs[1]:
 # =========================================
 # Tab 2: Trade Analyzer (lean version)
 # =========================================
-with tabs[2]:
+with tabs[2]]:
     st.markdown("### 🔄 Team-to-Team Trade Analyzer")
     st.caption("Weekly uses your chosen source. ROS uses a best-effort estimate (ESPN/FP/fallback).")
 
@@ -408,7 +408,7 @@ with tabs[2]:
         st.write(f"**ROS (est.)** → {teamA.team_abbrev} net: {B_ros - A_ros:+.1f}, {teamB.team_abbrev} net: {A_ros - B_ros:+.1f}")
 
 # =========================================
-# Tab 3: Free Agents (with full ESPN pool + ROS est.)
+# Tab 3: Free Agents (with big ESPN pool + ROS est.)
 # =========================================
 with tabs[3]:
     st.markdown("### 🛒 Free Agents — Add/Drop Recommendations")
@@ -514,13 +514,14 @@ with tabs[3]:
         st.info("No free agents found via ESPN or FP fallback.")
     else:
         df_fa = pd.DataFrame(rows)
-        df_fa.sort_values(by=["Verdict", "Δ Weekly", "Δ ROS (est.)"], ascending=[False, False, False], inplace=True)
+        df_fa.sort_values(by=["Verdict", "Δ Weekly", "Δ ROS (est.)"],
+                          ascending=[False, False, False], inplace=True)
         st.dataframe(df_fa.head(fa_size), use_container_width=True)
 
 # =========================================
-# Tab 6: Waiver Tracker (uses same logic; shorter view)
+# Tab 4: Waiver Tracker (uses FA table if present)
 # =========================================
-with tabs[6]:
+with tabs[4]:
     st.markdown("### 🧾 Waiver Wire Tracker")
     st.caption("Ranks FAs by Δ Weekly and Δ ROS (est.) vs best drop.")
 
@@ -530,7 +531,6 @@ with tabs[6]:
         f"Weekly ({proj_source})", "ROS (est.)",
         "Drop", "Δ Weekly", "Δ ROS (est.)", "Would Start?", "Verdict"
     ]
-    # Reuse the FA table if already computed in this run
     if "df_fa" in locals() and not df_fa.empty:
         view = df_fa.sort_values(by=["Δ Weekly", "Δ ROS (est.)"], ascending=False)
         st.dataframe(view[view_cols].head(wt_fa_size), use_container_width=True)
@@ -538,10 +538,9 @@ with tabs[6]:
         st.info("Open the Free Agents tab first (or refresh).")
 
 # =========================================
-# Tab 7: What-If Lineup (simulate adding FA)
+# Tab 5: What-If Lineup (simulate adding FA)
 # =========================================
-with tabs[7]:
-
+with tabs[5]:
     st.markdown("### 🧪 What-If: If I picked up a free agent, my starting lineup would be…")
     size = st.slider("FA pool per position to consider", 10, 200, 50, step=10)
     rostered_names = get_all_rostered_names(league)
@@ -582,10 +581,9 @@ with tabs[7]:
     drop_sel = st.selectbox("Who would you drop?", options=drop_opts)
 
     if pick and pick != "— pick a player —":
-        fa = pool[names.index(pick) - 1]  # minus 1 for the placeholder
+        fa = pool[names.index(pick)]  # 1:1 mapping (no placeholder offset due to list construction)
         lineup, bench = build_optimizer(my_team.roster, starting_slots)
         if drop_sel == "(auto choose best drop)":
-            # choose among bench by lowest ROS then weekly
             candidate_pool = bench or my_team.roster
             drop = sorted(candidate_pool, key=lambda p: (ros_estimate(p), get_proj_week(p)))[0]
         else:
@@ -597,18 +595,24 @@ with tabs[7]:
         new_lineup, _ = build_optimizer(hypo, starting_slots)
 
         def total(lp):
-            return sum(get_proj_week(p) for L in lp.values() for p in L), \
-                   sum(ros_estimate(p) for L in lp.values() for p in L)
+            w = sum(get_proj_week(p) for L in lp.values() for p in L)
+            r = sum(ros_estimate(p) for L in lp.values() for p in L)
+            return w, r
 
         cur_w, cur_ros = total(cur_lineup)
         new_w, new_ros = total(new_lineup)
 
         st.markdown("#### Result")
-        st.write(f"**Weekly**: {new_w:.1f} ({new_w - cur_w:+.1f}) | **ROS (est.)**: {new_ros:.1f} ({new_ros - cur_ros:+.1f})")
+        st.write(
+            f"**Weekly**: {new_w:.1f} ({new_w - cur_w:+.1f}) | "
+            f"**ROS (est.)**: {new_ros:.1f} ({new_ros - cur_ros:+.1f})"
+        )
         st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
 
-# ----- Advanced Stats -----
-with tabs[5]:
+# =========================================
+# Tab 6: Advanced Stats
+# =========================================
+with tabs[6]:
     st.markdown("### 📊 Advanced Player Stats")
 
     try:
@@ -636,17 +640,22 @@ with tabs[5]:
             )
             df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
-import altair as altair
+            chart = (
+                alt.Chart(df_melt)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Player:N", sort="-y"),
+                    y=alt.Y("Points:Q"),
+                    color="Type:N",
+                    column="Pos:N",
+                    tooltip=["Player", "Pos", "Type", "Points"],
+                )
+                .properties(width=140, height=260)
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No data available yet for advanced stats.")
 
-chart = (
-    altair.Chart(df_melt)
-    .mark_bar()
-    .encode(
-        x=altair.X("Player:N", sort="-y"),
-        y=altair.Y("Points:Q"),
-        color="Type:N",
-        column="Pos:N",
-        tooltip=["Player", "Pos", "Type", "Points"],
-    ).properties(width=140, height=260)
-)
-st.altair_chart(chart, use_container_width=True)
+    except Exception as e:
+        st.warning("Could not load advanced stats.")
+        st.caption(str(e))
