@@ -2,6 +2,9 @@ import os
 import pandas as pd
 import streamlit as st
 import altair as alt
+from types import ModuleType
+if not isinstance(alt, ModuleType) or not hasattr(alt, "Chart"):
+    import altair as alt
 import requests
 from bs4 import BeautifulSoup
 from espn_api.football import League
@@ -604,7 +607,7 @@ with tabs[5]:
         st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
 
 # ----- Advanced Stats -----
-with tabs[5]:  # 📊 Advanced Stats is at index 5 here (0-based)
+with tabs[5]:  # make sure this matches where you put the tab
     st.markdown("### 📊 Advanced Player Stats")
 
     try:
@@ -626,27 +629,24 @@ with tabs[5]:  # 📊 Advanced Stats is at index 5 here (0-based)
         if not df_adv.empty:
             df_melt = df_adv.melt(
                 id_vars=["Player", "Pos"],
-                value_vars=[
-                    f"Weekly ({proj_source})",
-                    "ROS ESPN",
-                    "ROS FP"
-                ],
+                value_vars=[f"Weekly ({proj_source})", "ROS ESPN", "ROS FP"],
                 var_name="Type",
-                value_name="Points"
+                value_name="Points",
             )
-            df_melt["Points"] = pd.to_numeric(
-                df_melt["Points"], errors="coerce"
-            ).fillna(0)
+            df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
+
+            # SAFEST way: import as altair and use altair.Chart
+            import altair as altair
 
             chart = (
-                alt.Chart(df_melt)
+                altair.Chart(df_melt)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Player:N", sort="-y"),
-                    y=alt.Y("Points:Q"),
+                    x=altair.X("Player:N", sort="-y"),
+                    y=altair.Y("Points:Q"),
                     color="Type:N",
                     column="Pos:N",
-                    tooltip=["Player", "Pos", "Type", "Points"]
+                    tooltip=["Player", "Pos", "Type", "Points"],
                 )
                 .properties(width=140, height=260)
             )
