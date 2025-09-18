@@ -269,17 +269,17 @@ with st.expander("Lineup Slots", expanded=True):
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
-tab_labels = [
+tabs = st.tabs([
     "✅ Optimizer",
     "🔍 Matchups",
     "🔄 Trade Analyzer",
     "🛒 Free Agents",
     "📈 Logs",
+    "📊 Advanced Stats",  # <— Tab 6
     "🧾 Waiver Tracker",
     "🧪 What-If Lineup",
-    "📊 Advanced Stats",  # <— add this
-]
-tabs = st.tabs(tab_labels)
+])
+
 
 
 # =========================================
@@ -604,11 +604,10 @@ with tabs[5]:
         st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
 
 # ----- Advanced Stats -----
-with tabs[6]:
+with tabs[5]:  # 📊 Advanced Stats is at index 5 here (0-based)
     st.markdown("### 📊 Advanced Player Stats")
 
     try:
-        # Build DataFrame from your team roster
         adv_rows = []
         for p in my_team.roster:
             adv_rows.append({
@@ -622,10 +621,8 @@ with tabs[6]:
             })
         df_adv = pd.DataFrame(adv_rows)
 
-        # Show table
         st.dataframe(df_adv, use_container_width=True)
 
-        # Show chart (safe Altair)
         if not df_adv.empty:
             df_melt = df_adv.melt(
                 id_vars=["Player", "Pos"],
@@ -637,7 +634,9 @@ with tabs[6]:
                 var_name="Type",
                 value_name="Points"
             )
-            df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
+            df_melt["Points"] = pd.to_numeric(
+                df_melt["Points"], errors="coerce"
+            ).fillna(0)
 
             chart = (
                 alt.Chart(df_melt)
@@ -658,4 +657,3 @@ with tabs[6]:
     except Exception as e:
         st.warning("Could not load advanced stats.")
         st.caption(str(e))
-
