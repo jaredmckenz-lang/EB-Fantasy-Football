@@ -636,22 +636,17 @@ with tabs[5]:
             )
             df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
-            chart = (
-                altair.Chart(df_melt)
-                .mark_bar()
-                .encode(
-                    x=altair.X("Player:N", sort="-y"),
-                    y=altair.Y("Points:Q"),
-                    color="Type:N",
-                    column="Pos:N",
-                    tooltip=["Player", "Pos", "Type", "Points"],
-                )
-                .properties(width=140, height=260)
-            )
-            st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("No data available yet for advanced stats.")
+import altair as altair
 
-    except Exception as e:
-        st.warning("Could not load advanced stats.")
-        st.caption(str(e))
+chart = (
+    altair.Chart(df_melt)
+    .mark_bar()
+    .encode(
+        x=altair.X("Player:N", sort="-y"),
+        y=altair.Y("Points:Q"),
+        color="Type:N",
+        column="Pos:N",
+        tooltip=["Player", "Pos", "Type", "Points"],
+    ).properties(width=140, height=260)
+)
+st.altair_chart(chart, use_container_width=True)
