@@ -636,9 +636,6 @@ with tabs[5]:
             )
             df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
-            # Use altair explicitly to avoid any shadowing of `alt`
-            import altair as altair
-
             chart = (
                 altair.Chart(df_melt)
                 .mark_bar()
