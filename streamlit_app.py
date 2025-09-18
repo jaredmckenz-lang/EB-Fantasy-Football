@@ -269,14 +269,18 @@ with st.expander("Lineup Slots", expanded=True):
 
 starting_slots = {"QB": QB, "RB": RB, "WR": WR, "TE": TE, "FLEX": FLEX, "D/ST": DST, "K": K}
 
-tabs = st.tabs([
+tab_labels = [
     "✅ Optimizer",
     "🔍 Matchups",
     "🔄 Trade Analyzer",
     "🛒 Free Agents",
+    "📈 Logs",
     "🧾 Waiver Tracker",
     "🧪 What-If Lineup",
-])
+    "📊 Advanced Stats",  # <— add this
+]
+tabs = st.tabs(tab_labels)
+
 
 # =========================================
 # Tab 0: Optimizer
@@ -598,3 +602,60 @@ with tabs[5]:
         st.markdown("#### Result")
         st.write(f"**Weekly**: {new_w:.1f} ({new_w - cur_w:+.1f}) | **ROS (est.)**: {new_ros:.1f} ({new_ros - cur_ros:+.1f})")
         st.caption(f"Drop: **{getattr(drop,'name','N/A')}** → Add: **{fa.name} ({fa.position})**")
+
+# ----- Advanced Stats -----
+with tabs[6]:
+    st.markdown("### 📊 Advanced Player Stats")
+
+    try:
+        # Build DataFrame from your team roster
+        adv_rows = []
+        for p in my_team.roster:
+            adv_rows.append({
+                "Player": getattr(p, "name", "N/A"),
+                "Pos": getattr(p, "position", "N/A"),
+                f"Weekly ({proj_source})": get_proj_week(p),
+                "ROS ESPN": get_ros_espn(p),
+                "ROS FP": get_ros_fp(p),
+                "Last Week": getattr(p, "points", 0),
+                "Opponent": getattr(p, "pro_opponent", "N/A"),
+            })
+        df_adv = pd.DataFrame(adv_rows)
+
+        # Show table
+        st.dataframe(df_adv, use_container_width=True)
+
+        # Show chart (safe Altair)
+        if not df_adv.empty:
+            df_melt = df_adv.melt(
+                id_vars=["Player", "Pos"],
+                value_vars=[
+                    f"Weekly ({proj_source})",
+                    "ROS ESPN",
+                    "ROS FP"
+                ],
+                var_name="Type",
+                value_name="Points"
+            )
+            df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
+
+            chart = (
+                alt.Chart(df_melt)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Player:N", sort="-y"),
+                    y=alt.Y("Points:Q"),
+                    color="Type:N",
+                    column="Pos:N",
+                    tooltip=["Player", "Pos", "Type", "Points"]
+                )
+                .properties(width=140, height=260)
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No data available yet for advanced stats.")
+
+    except Exception as e:
+        st.warning("Could not load advanced stats.")
+        st.caption(str(e))
+
