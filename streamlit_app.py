@@ -631,31 +631,32 @@ with tabs[6]:
 
         st.dataframe(df_adv, use_container_width=True)
 
-        if not df_adv.empty:
-            df_melt = df_adv.melt(
-                id_vars=["Player", "Pos"],
-                value_vars=[f"Weekly ({proj_source})", "ROS ESPN", "ROS FP"],
-                var_name="Type",
-                value_name="Points",
-            )
-            df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
+if not df_adv.empty:
+    df_melt = df_adv.melt(
+        id_vars=["Player", "Pos"],
+        value_vars=[f"Weekly ({proj_source})", "ROS ESPN", "ROS FP"],
+        var_name="Type",
+        value_name="Points",
+    )
+    df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
-            # Import Altair locally with a distinct alias so we avoid any shadowed `alt`
-            import altair as altair
+    # Import Altair locally with a unique alias
+    import altair as altair
 
-            chart = (
-                altair.Chart(df_melt)
-                .mark_bar()
-                .encode(
-                    x=altair.X("Player:N", sort="-y"),
-                    y=altair.Y("Points:Q"),
-                    color="Type:N",
-                    column="Pos:N",
-                    tooltip=["Player", "Pos", "Type", "Points"],
-                )
-                .properties(width=140, height=260)
-            )
-            st.altair_chart(chart, use_container_width=True)
+    chart = (
+        altair.Chart(df_melt)
+        .mark_bar()
+        .encode(
+            x=altair.X("Player:N", sort="-y"),
+            y=altair.Y("Points:Q"),
+            color="Type:N",
+            column="Pos:N",
+            tooltip=["Player", "Pos", "Type", "Points"],
+        )
+        .properties(width=140, height=260)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
         else:
             st.info("No data available yet for advanced stats.")
 
