@@ -640,12 +640,15 @@ with tabs[6]:
             )
             df_melt["Points"] = pd.to_numeric(df_melt["Points"], errors="coerce").fillna(0)
 
+            # Import Altair locally with a distinct alias so we avoid any shadowed `alt`
+            import altair as altair
+
             chart = (
-                alt.Chart(df_melt)
+                altair.Chart(df_melt)
                 .mark_bar()
                 .encode(
-                    x=alt.X("Player:N", sort="-y"),
-                    y=alt.Y("Points:Q"),
+                    x=altair.X("Player:N", sort="-y"),
+                    y=altair.Y("Points:Q"),
                     color="Type:N",
                     column="Pos:N",
                     tooltip=["Player", "Pos", "Type", "Points"],
